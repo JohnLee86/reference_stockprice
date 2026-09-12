@@ -50,7 +50,15 @@ def process_company(company: str, ticker: str, today: str):
         "--output", str(raw_csv),
     ])
     if not ok:
-        print(f"[{company}] 다운로드 실패 - 건너뜁니다.")
+        print(f"[{company}] KRX 직접 조회 실패 - 네이버금융 경유로 재시도합니다.")
+        ok = run([
+            "python3", str(SCRIPTS / "download_krx_data.py"),
+            "--company", company, "--ticker", ticker,
+            "--from", from_date, "--to", today.replace("-", ""),
+            "--output", str(raw_csv), "--source", "naver",
+        ])
+    if not ok:
+        print(f"[{company}] 다운로드 실패(KRX/네이버 모두) - 건너뜁니다.")
         return
 
     calc_cmd = ["python3", str(SCRIPTS / "calculate_reference_price.py"),
