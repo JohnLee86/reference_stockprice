@@ -1,0 +1,6 @@
+pandas
+openpyxl
+python-dateutil
+pykrx
+python-docx
+matplotlib
