@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 KST = timezone(timedelta(hours=9))
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 SCRIPTS = ROOT / "scripts"
 
