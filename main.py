@@ -1,3 +1,4 @@
+python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -83,8 +84,10 @@ def process_company(company: str, ticker: str, today: str):
         print(f"[{company}] 보고서 생성 실패 - 건너뜁니다.")
         return
 
-    run(["python3", str(SCRIPTS / "send_email.py"),
-         "--company", company, "--attachment", str(report_path)])
+    if not run(["python3", str(SCRIPTS / "send_email.py"),
+                "--company", company, "--attachment", str(report_path)]):
+        print(f"[{company}] 이메일 발송 실패.")
+        sys.exit(1)
 
 
 def main():
