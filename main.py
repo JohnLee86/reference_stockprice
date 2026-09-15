@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-전체 파이프라인 실행: 다운로드 -> 계산 -> 보고서 생성 -> 이메일 발송
+전체 파이프라인 실행: (회사별) 다운로드 -> 계산  ->  (1) 삼성전자 단독 보고서+메일
+                                                  (2) 전체 회사 통합 보고서+메일
 
-대상 회사/종목은 config.json에서 읽는다. 여러 회사를 등록하면 순서대로 전부 처리한다.
-휴장일 등으로 신규 데이터가 없으면(오늘 날짜 데이터가 없으면) 해당 회사는 건너뛰고
-이메일을 보내지 않는다 (빈 보고서 스팸 방지).
+대상 회사/종목은 config.json에서 읽는다. "individual_email": true 로 표시된 회사는
+별도로 단독 보고서 메일도 받는다 (현재는 삼성전자만 해당).
 
 데이터 출처는 KRX 직접 조회만 사용한다 (네이버 등 대체 출처는 쓰지 않음 - 당일 거래량이
 KRX보다 늦게 갱신되는 문제가 있어서 정확성을 우선). KRX 조회가 실패하면 그날은
-보고서/이메일을 건너뛰고 실패로 표시한다.
+해당 회사를 건너뛰고 실패로 표시한다.
 """
 import json
 import subprocess
@@ -25,7 +25,7 @@ DATA_DIR = ROOT / "data"
 SCRIPTS = ROOT / "scripts"
 
 
-def run(cmd: list[str]):
+def run(cmd: list[str]) -> bool:
     print("실행:", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
     print(result.stdout)
@@ -34,14 +34,12 @@ def run(cmd: list[str]):
     return result.returncode == 0
 
 
-def process_company(company: str, ticker: str, today: str) -> bool:
-    """성공하면 True, 실패(진짜 오류)하면 False. 휴장일 등 정상적인 건너뜀도 True로 취급."""
+def update_company_data(company: str, ticker: str, today: str) -> tuple[bool, bool]:
+    """(성공 여부, 오늘자 신규 데이터 있음 여부)를 반환. 다운로드/계산만 수행."""
     DATA_DIR.mkdir(exist_ok=True)
     existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
     raw_csv = DATA_DIR / f"{company}_원자료_임시.csv"
-    report_path = DATA_DIR / f"{company}_일별_기준주가_보고서.docx"
 
-    # 기존 파일이 있으면 마지막 날짜 다음날부터, 없으면 2025-08-01부터 (2025-10-14 기준값 계산에 필요)
     from_date = "20250801"
     if existing_xlsx.exists():
         prev = pd.read_excel(existing_xlsx, sheet_name="계산용데이터")
@@ -59,7 +57,7 @@ def process_company(company: str, ticker: str, today: str) -> bool:
         ])
         if not ok:
             print(f"[{company}] KRX 직접 조회 실패 - 대체 데이터는 쓰지 않고 오늘은 실패 처리합니다.")
-            return False
+            return False, False
 
     if raw_csv.exists():
         calc_cmd = ["python3", str(SCRIPTS / "calculate_reference_price.py"),
@@ -69,26 +67,57 @@ def process_company(company: str, ticker: str, today: str) -> bool:
             calc_cmd += ["--existing", str(existing_xlsx)]
         if not run(calc_cmd):
             print(f"[{company}] 계산 실패.")
-            return False
+            return False, False
 
-    # 오늘자 데이터가 실제로 있는지 확인 (휴장일이면 신규 행이 없을 수 있음)
+    if not existing_xlsx.exists():
+        print(f"[{company}] 누적 데이터 파일이 없습니다.")
+        return False, False
+
     updated = pd.read_excel(existing_xlsx, sheet_name="계산용데이터")
     latest_date = pd.to_datetime(updated["날짜"]).max()
-    if latest_date.strftime("%Y-%m-%d") != today:
-        print(f"[{company}] 오늘({today}) 신규 데이터 없음 (휴장일 등) - 이메일 건너뜀.")
-        return True
+    has_today = latest_date.strftime("%Y-%m-%d") == today
+
+    return True, has_today
+
+
+def send_individual_report(company: str) -> bool:
+    existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
+    report_path = DATA_DIR / f"{company}_일별_기준주가_보고서.docx"
 
     if not run(["python3", str(SCRIPTS / "generate_report.py"),
                 "--company", company, "--input", str(existing_xlsx),
                 "--output", str(report_path)]):
-        print(f"[{company}] 보고서 생성 실패.")
+        print(f"[{company}] 개별 보고서 생성 실패.")
         return False
 
     if not run(["python3", str(SCRIPTS / "send_email.py"),
                 "--company", company, "--attachment", str(report_path)]):
-        print(f"[{company}] 이메일 발송 실패.")
+        print(f"[{company}] 개별 이메일 발송 실패.")
+        return False
+    return True
+
+
+def send_combined_report(companies: list[str]) -> bool:
+    combined_path = DATA_DIR / "삼성그룹_통합_보고서.docx"
+    input_args = []
+    for company in companies:
+        xlsx_path = DATA_DIR / f"{company}_일별_기준주가.xlsx"
+        if xlsx_path.exists():
+            input_args.append(f"{company}:{xlsx_path}")
+
+    if not input_args:
+        print("통합 보고서: 사용할 수 있는 회사 데이터가 없습니다.")
         return False
 
+    if not run(["python3", str(SCRIPTS / "generate_combined_report.py"),
+                "--input", *input_args, "--output", str(combined_path)]):
+        print("통합 보고서 생성 실패.")
+        return False
+
+    if not run(["python3", str(SCRIPTS / "send_email.py"),
+                "--company", "삼성그룹 전체", "--attachment", str(combined_path)]):
+        print("통합 보고서 이메일 발송 실패.")
+        return False
     return True
 
 
@@ -98,9 +127,31 @@ def main():
 
     today = datetime.now(tz=KST).strftime("%Y-%m-%d")
     all_ok = True
+    ready_companies = []  # 오늘자 데이터가 확보된 회사만 보고서 대상
+    individual_targets = []
+
     for entry in config["companies"]:
-        if not process_company(entry["company"], entry["ticker"], today):
+        company, ticker = entry["company"], entry["ticker"]
+        ok, has_today = update_company_data(company, ticker, today)
+        if not ok:
             all_ok = False
+            continue
+        if has_today:
+            ready_companies.append(company)
+            if entry.get("individual_email"):
+                individual_targets.append(company)
+        else:
+            print(f"[{company}] 오늘({today}) 신규 데이터 없음 (휴장일 등) - 보고서 대상에서 제외.")
+
+    for company in individual_targets:
+        if not send_individual_report(company):
+            all_ok = False
+
+    if ready_companies:
+        if not send_combined_report(ready_companies):
+            all_ok = False
+    else:
+        print("오늘 보고서를 발송할 회사가 없습니다 (전체 휴장일 등).")
 
     if not all_ok:
         sys.exit(1)
