@@ -180,16 +180,27 @@ def main():
         print(f"\n검색창으로 추정되는 입력창 발견 (frame url={target_frame.url}), '{TARGET_NAME}' 입력 시도...")
         search_input.click()
         search_input.fill(TARGET_NAME)
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1000)
+        search_input.press("Enter")
+        page.wait_for_timeout(3000)
         page.screenshot(path="/tmp/krx_stock_page_step2.png", full_page=True)
+        print("검색(엔터) 후 현재 URL:", page.url)
 
-        print("\n=== 검색어 입력 후 보이는 텍스트 일부 (자동완성 목록 확인용) ===")
-        try:
-            body_text = target_frame.inner_text("body")
-            idx = body_text.find(TARGET_NAME)
-            print(body_text[max(0, idx - 100): idx + 300] if idx >= 0 else "(검색어를 본문에서 못 찾음)")
-        except Exception as e:
-            print("본문 텍스트 읽기 실패:", e)
+        print("\n=== 검색 결과 페이지의 모든 frame과 그 안의 table 개수/헤더 ===")
+        for fi, frame in enumerate(page.frames):
+            try:
+                tables = frame.locator("table").all()
+                if not tables:
+                    continue
+                print(f"\n[frame {fi}] url={frame.url} - table {len(tables)}개 발견")
+                for ti, table in enumerate(tables):
+                    try:
+                        header_text = table.locator("th").all_inner_texts()
+                        print(f"  table[{ti}] 헤더: {header_text[:15]}")
+                    except Exception as e:
+                        print(f"  table[{ti}] 헤더 읽기 실패: {e}")
+            except Exception:
+                continue
 
         browser.close()
 
