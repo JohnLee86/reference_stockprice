@@ -151,49 +151,67 @@ def main():
         print("\n=== 입력창/버튼 목록 ===")
         dump_inputs_and_buttons(page)
 
-        # 종목명 입력창 탐색 (placeholder에 '종목' 포함 우선)
+        # 종목명 검색창: KRX 표준 위젯 (name=tboxisuCd_finder_stkisu0_0)
         search_input = None
         target_frame = None
         for frame in page.frames:
             try:
-                for el in frame.locator("input[type='text']").all():
-                    ph = el.get_attribute("placeholder") or ""
-                    if "종목" in ph:
-                        search_input = el
-                        target_frame = frame
-                        break
-                if search_input:
+                el = frame.locator("input[name='tboxisuCd_finder_stkisu0_0']")
+                if el.count() > 0:
+                    search_input = el.first
+                    target_frame = frame
                     break
             except Exception:
                 continue
 
         if search_input is None:
-            print("\n'종목' 관련 placeholder를 가진 입력창을 찾지 못했습니다. 위 목록에서 확인 부탁드립니다.")
+            print("\n종목검색기 입력창(tboxisuCd_finder_stkisu0_0)을 찾지 못했습니다.")
             browser.close()
             return
 
         print(f"\n종목명 입력창 발견 (frame={target_frame.url}) - '{TARGET_NAME}' 입력")
         search_input.click()
         search_input.fill(TARGET_NAME)
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
         page.screenshot(path="/tmp/krx_stock_page_step2.png", full_page=True)
 
+        # 자동완성 드롭다운에서 정확히 일치하는 항목 클릭 시도
+        suggestion_clicked = False
         try:
-            search_input.press("Enter")
-        except Exception:
-            pass
-        page.wait_for_timeout(1000)
+            for tag in ["li", "div", "td", "a"]:
+                loc = target_frame.locator(f"{tag}:text-is('{TARGET_NAME}')")
+                if loc.count() > 0:
+                    loc.first.click()
+                    suggestion_clicked = True
+                    print(f"자동완성 항목 클릭 성공 (tag={tag})")
+                    break
+        except Exception as e:
+            print(f"자동완성 클릭 시도 중 오류: {e}")
 
-        # 조회 버튼이 있으면 클릭
+        if not suggestion_clicked:
+            print("자동완성 항목을 못 찾아 Enter로 대체 시도")
+            try:
+                search_input.press("Enter")
+            except Exception:
+                pass
+
+        page.wait_for_timeout(1500)
+        page.screenshot(path="/tmp/krx_stock_page_step2b.png", full_page=True)
+
+        # '조회' 텍스트를 가진 아무 태그나 클릭 (버튼이 아닐 수 있음)
+        clicked_search_btn = False
         for frame in page.frames:
             try:
-                btn = frame.get_by_role("button", name="조회", exact=True)
-                if btn.count() > 0:
-                    btn.first.click()
-                    print("'조회' 버튼 클릭")
+                loc = frame.locator(":text-is('조회')")
+                if loc.count() > 0:
+                    loc.first.click()
+                    clicked_search_btn = True
+                    print("'조회' 요소 클릭 성공")
                     break
             except Exception:
                 continue
+        if not clicked_search_btn:
+            print("'조회' 텍스트를 가진 요소를 찾지 못했습니다.")
 
         # 표 데이터 로딩 대기 (최대 15초)
         loaded = False
