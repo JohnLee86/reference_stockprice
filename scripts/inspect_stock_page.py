@@ -126,19 +126,7 @@ def main():
             browser.close()
             return
 
-        print("\n좌측 메뉴에서 '주식' -> '종목정보' -> '개별종목 종합정보' 클릭 시도...")
-        try:
-            page.get_by_text("주식", exact=True).first.click()
-            page.wait_for_timeout(800)
-            page.get_by_text("종목정보", exact=True).first.click()
-            page.wait_for_timeout(800)
-            page.get_by_text("개별종목 종합정보", exact=True).first.click()
-            page.wait_for_timeout(2000)
-        except Exception as e:
-            print(f"메뉴 클릭 중 오류: {e}", file=sys.stderr)
-
-        print("메뉴 클릭 후 현재 URL:", page.url)
-        page.screenshot(path="/tmp/krx_stock_page_step1.png", full_page=True)
+        print("\n좌측 메뉴 대신 상단 전역 검색창을 사용합니다 (더 안정적으로 확인됨).")
 
         print("\n=== 현재 페이지(및 모든 frame)의 input 요소 ===")
         for fi, frame in enumerate(page.frames):
@@ -182,11 +170,26 @@ def main():
         search_input.fill(TARGET_NAME)
         page.wait_for_timeout(1000)
         search_input.press("Enter")
-        page.wait_for_timeout(3000)
+
+        # 표에 실제 데이터 행(tr)이 생길 때까지 최대 15초 폴링
+        loaded = False
+        for _ in range(30):
+            page.wait_for_timeout(500)
+            for frame in page.frames:
+                try:
+                    if frame.locator("table tr").count() > 3:
+                        loaded = True
+                        break
+                except Exception:
+                    continue
+            if loaded:
+                break
+        print(f"검색(엔터) 후 데이터 로딩 {'완료' if loaded else '15초 내 미확인'}")
+
         page.screenshot(path="/tmp/krx_stock_page_step2.png", full_page=True)
         print("검색(엔터) 후 현재 URL:", page.url)
 
-        print("\n=== 검색 결과 페이지의 모든 frame과 그 안의 table 개수/헤더 ===")
+        print("\n=== 검색 결과 페이지의 모든 frame과 그 안의 table 개수/내용 ===")
         for fi, frame in enumerate(page.frames):
             try:
                 tables = frame.locator("table").all()
@@ -195,10 +198,16 @@ def main():
                 print(f"\n[frame {fi}] url={frame.url} - table {len(tables)}개 발견")
                 for ti, table in enumerate(tables):
                     try:
+                        row_count = table.locator("tr").count()
                         header_text = table.locator("th").all_inner_texts()
-                        print(f"  table[{ti}] 헤더: {header_text[:15]}")
+                        first_row_text = table.locator("tr").first.inner_text() if row_count else ""
+                        print(f"  table[{ti}] 행수={row_count} 헤더={header_text[:15]}")
+                        print(f"  table[{ti}] 첫 행 텍스트: {first_row_text[:200]}")
+                        if row_count > 1:
+                            second_row_text = table.locator("tr").nth(1).inner_text()
+                            print(f"  table[{ti}] 둘째 행 텍스트: {second_row_text[:200]}")
                     except Exception as e:
-                        print(f"  table[{ti}] 헤더 읽기 실패: {e}")
+                        print(f"  table[{ti}] 읽기 실패: {e}")
             except Exception:
                 continue
 
