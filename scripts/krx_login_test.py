@@ -58,7 +58,7 @@ def main():
         login_frame.locator("input[name='mbrId']").fill(krx_id)
         login_frame.locator("input[name='pw']").fill(krx_pw)
 
-        login_frame.get_by_text("로그인", exact=True).click()
+        login_frame.get_by_role("link", name="로그인", exact=True).click()
         page.wait_for_timeout(3000)  # 로그인 처리 및 리다이렉트 대기
 
         page.screenshot(path="/tmp/krx_after_login.png", full_page=True)
