@@ -55,7 +55,7 @@ def login(page, krx_id, krx_pw):
         if popup_frame:
             print(f"[시도 {attempt + 1}] 팝업 발견 - '확인' 클릭")
             try:
-                popup_frame.get_by_text("확인", exact=True).click()
+                popup_frame.get_by_role("button", name="확인", exact=True).click()
             except Exception as e:
                 print(f"[시도 {attempt + 1}] 팝업 클릭 실패: {e}")
             page.wait_for_timeout(1500)
