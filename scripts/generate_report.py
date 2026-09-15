@@ -22,11 +22,17 @@ import pandas as pd
 # 한글 폰트 등록 (GitHub Actions의 신규 리눅스 러너에는 한글 폰트가 기본 설치되어 있지
 # 않으므로, pykrx 패키지에 이미 번들된 나눔바른고딕 폰트를 직접 찾아 등록한다.
 try:
-    import importlib.resources as _resources
+    import glob
 
-    with _resources.path("pykrx", "NanumBarunGothic.ttf") as _font_path:
-        fm.fontManager.addfont(str(_font_path))
-        plt.rc("font", family=fm.FontProperties(fname=str(_font_path)).get_name())
+    _candidates = (
+        glob.glob("/usr/share/fonts/**/Nanum*.ttf", recursive=True)
+        + glob.glob("/usr/share/fonts/**/NanumGothic*.otf", recursive=True)
+        + glob.glob("/usr/share/fonts/**/*CJK*.ttc", recursive=True)
+        + glob.glob("/usr/share/fonts/**/*CJK*.otf", recursive=True)
+    )
+    if _candidates:
+        fm.fontManager.addfont(_candidates[0])
+        plt.rc("font", family=fm.FontProperties(fname=_candidates[0]).get_name())
 except Exception:
     pass  # 폰트 등록에 실패해도 보고서 생성 자체는 계속 진행 (라벨이 깨질 수 있음)
 plt.rcParams["axes.unicode_minus"] = False
