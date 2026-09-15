@@ -40,7 +40,7 @@ def main():
         page.screenshot(path="/tmp/krx_login_page.png", full_page=True)
         print("스크린샷 저장: /tmp/krx_login_page.png")
 
-        print("\n--- input 요소 목록 ---")
+        print("\n--- input 요소 목록 (메인 프레임) ---")
         inputs = page.locator("input").all()
         for i, el in enumerate(inputs):
             try:
@@ -53,7 +53,7 @@ def main():
             except Exception as e:
                 print(f"[{i}] 읽기 실패: {e}")
 
-        print("\n--- button 요소 목록 ---")
+        print("\n--- button 요소 목록 (메인 프레임) ---")
         buttons = page.locator("button").all()
         for i, el in enumerate(buttons):
             try:
@@ -61,13 +61,37 @@ def main():
             except Exception as e:
                 print(f"[{i}] 읽기 실패: {e}")
 
-        print("\n--- '로그인' 텍스트를 포함한 링크/버튼 ---")
+        print("\n--- '로그인' 텍스트를 포함한 링크/버튼 (메인 프레임) ---")
         login_like = page.locator("text=로그인").all()
         for i, el in enumerate(login_like):
             try:
                 print(f"[{i}] tag={el.evaluate('e => e.tagName')} text='{el.inner_text().strip()}'")
             except Exception as e:
                 print(f"[{i}] 읽기 실패: {e}")
+
+        print("\n=== 페이지 안의 모든 frame(iframe 포함) 목록 ===")
+        for fi, frame in enumerate(page.frames):
+            print(f"\n[frame {fi}] name={frame.name!r} url={frame.url}")
+            try:
+                f_inputs = frame.locator("input").all()
+                for i, el in enumerate(f_inputs):
+                    try:
+                        print(
+                            f"  input[{i}] type={el.get_attribute('type')} "
+                            f"name={el.get_attribute('name')} "
+                            f"id={el.get_attribute('id')} "
+                            f"placeholder={el.get_attribute('placeholder')}"
+                        )
+                    except Exception as e:
+                        print(f"  input[{i}] 읽기 실패: {e}")
+                f_buttons = frame.locator("button").all()
+                for i, el in enumerate(f_buttons):
+                    try:
+                        print(f"  button[{i}] text='{el.inner_text().strip()}' id={el.get_attribute('id')}")
+                    except Exception as e:
+                        print(f"  button[{i}] 읽기 실패: {e}")
+            except Exception as e:
+                print(f"  프레임 조회 실패: {e}")
 
         browser.close()
 
