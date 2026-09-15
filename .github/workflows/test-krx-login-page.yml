@@ -1,0 +1,31 @@
+name: (테스트) KRX 로그인 페이지 구조 확인
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치
+        run: |
+          pip install playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: 로그인 페이지 구조 확인 (로그인 시도 없음)
+        run: python3 scripts/inspect_krx_login_page.py
+
+      - name: 스크린샷 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krx-login-page-screenshot
+          path: /tmp/krx_login_page.png
