@@ -61,9 +61,39 @@ def try_request(label, headers):
     print(resp.text[:400] if resp.text else "(빈 응답)")
 
 
+def try_request_with_session_priming():
+    """9/14 개편 이후 세션이 필요해졌다는 가설 테스트:
+    먼저 메인 페이지를 방문해 세션 쿠키를 얻은 뒤, 같은 세션으로 데이터를 요청한다."""
+    print("\n=== C) 메인 페이지 선방문으로 세션 확보 후 요청 ===")
+    session = requests.Session()
+    main_page_headers = dict(HEADERS_BROWSER)
+    try:
+        r0 = session.get(
+            "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
+            headers=main_page_headers,
+            timeout=15,
+        )
+        print("메인 페이지 접속 상태 코드:", r0.status_code)
+        print("받은 쿠키:", session.cookies.get_dict())
+    except Exception as e:
+        print("메인 페이지 접속 자체가 실패했습니다:", e)
+        return
+
+    try:
+        resp = session.post(URL, data=PARAMS, headers=HEADERS_BROWSER, timeout=15)
+    except Exception as e:
+        print("데이터 요청이 실패했습니다:", e)
+        return
+    print("상태 코드:", resp.status_code)
+    print("Content-Type:", resp.headers.get("Content-Type", ""))
+    print("응답 앞부분(최대 400자):")
+    print(resp.text[:400] if resp.text else "(빈 응답)")
+
+
 def main():
     try_request("A) pykrx와 동일한 단순 헤더", HEADERS_PYKRX)
     try_request("B) 완전한 브라우저형 헤더", HEADERS_BROWSER)
+    try_request_with_session_priming()
 
 
 if __name__ == "__main__":
