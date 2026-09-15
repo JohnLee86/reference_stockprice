@@ -1,5 +1,20 @@
 {
   "companies": [
-    { "company": "삼성전자", "ticker": "005930" }
+    { "company": "삼성전자", "ticker": "005930", "individual_email": true },
+    { "company": "삼성전기", "ticker": "009150" },
+    { "company": "삼성물산", "ticker": "028260" },
+    { "company": "삼성SDI", "ticker": "006400" },
+    { "company": "삼성에스디에스", "ticker": "018260" },
+    { "company": "삼성바이오로직스", "ticker": "207940" },
+    { "company": "삼성E&A", "ticker": "028050" },
+    { "company": "삼성중공업", "ticker": "010140" },
+    { "company": "삼성증권", "ticker": "016360" },
+    { "company": "삼성생명", "ticker": "032830" },
+    { "company": "삼성카드", "ticker": "029780" },
+    { "company": "삼성화재", "ticker": "000810" },
+    { "company": "제일기획", "ticker": "030000" },
+    { "company": "호텔신라", "ticker": "008770" },
+    { "company": "에스원", "ticker": "012750" },
+    { "company": "삼성에피스홀딩스", "ticker": "0126Z0" }
   ]
 }
