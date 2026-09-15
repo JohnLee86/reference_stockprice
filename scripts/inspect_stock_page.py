@@ -22,34 +22,52 @@ TARGET_TICKER = "005930"
 TARGET_NAME = "삼성전자"
 
 
-def dismiss_existing_session_popup(page) -> bool:
+def find_login_frame(page):
+    for f in page.frames:
+        if f.name == "COMS001_FRAME":
+            return f
+    return None
+
+
+def check_popup(page):
     for frame in page.frames:
         try:
             if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
-                frame.get_by_text("확인", exact=True).click()
-                page.wait_for_timeout(1500)
-                return True
+                return frame
         except Exception:
             continue
-    return False
+    return None
+
+
+def check_success(page) -> bool:
+    try:
+        return "로그아웃" in page.inner_text("body")
+    except Exception:
+        return False
 
 
 def login(page, krx_id, krx_pw):
     page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(1500)
 
-    def find_login_frame():
-        for f in page.frames:
-            if f.name == "COMS001_FRAME":
-                return f
-        return None
+    for attempt in range(5):
+        popup_frame = check_popup(page)
+        if popup_frame:
+            print(f"[시도 {attempt + 1}] 팝업 발견 - '확인' 클릭")
+            try:
+                popup_frame.get_by_text("확인", exact=True).click()
+            except Exception as e:
+                print(f"[시도 {attempt + 1}] 팝업 클릭 실패: {e}")
+            page.wait_for_timeout(1500)
+            continue
 
-    for attempt in range(4):
-        dismiss_existing_session_popup(page)  # 이전 시도에서 남은 팝업이 있으면 먼저 정리
+        if check_success(page):
+            print(f"[시도 {attempt + 1}] 로그인 성공 확인 ('로그아웃' 문구 발견)")
+            return
 
-        login_frame = find_login_frame()
+        login_frame = find_login_frame(page)
         if login_frame is None:
-            print(f"[시도 {attempt + 1}] 로그인 프레임을 찾지 못함 - 대기 후 재확인")
+            print(f"[시도 {attempt + 1}] 로그인 프레임 없음 - 대기")
             page.wait_for_timeout(1500)
             continue
 
@@ -57,21 +75,25 @@ def login(page, krx_id, krx_pw):
             login_frame.locator("input[name='mbrId']").fill(krx_id)
             login_frame.locator("input[name='pw']").fill(krx_pw)
             login_frame.get_by_role("link", name="로그인", exact=True).click(timeout=5000)
+            print(f"[시도 {attempt + 1}] 로그인 버튼 클릭 완료, 결과 대기 중...")
         except Exception as e:
-            print(f"[시도 {attempt + 1}] 로그인 버튼 클릭 실패(팝업에 막혔을 가능성): {type(e).__name__}")
-            dismiss_existing_session_popup(page)
+            print(f"[시도 {attempt + 1}] 클릭 실패: {type(e).__name__}")
             page.wait_for_timeout(1000)
             continue
 
-        page.wait_for_timeout(2000)
-        dismiss_existing_session_popup(page)
-        page.wait_for_timeout(1500)
-
-        if "로그아웃" in page.inner_text("body"):
-            print(f"[시도 {attempt + 1}] 로그인 성공 확인 ('로그아웃' 문구 발견)")
-            return
-
-        print(f"[시도 {attempt + 1}] 아직 로그인 미완료 - 재시도")
+        # 클릭 직후 최대 8초간 폴링하며 성공/팝업 여부 확인
+        popped_up = False
+        for _ in range(16):
+            page.wait_for_timeout(500)
+            if check_success(page):
+                print(f"[시도 {attempt + 1}] 로그인 성공 확인 ('로그아웃' 문구 발견)")
+                return
+            if check_popup(page):
+                print(f"[시도 {attempt + 1}] 클릭 직후 팝업 발견 - 다음 루프에서 처리")
+                popped_up = True
+                break
+        if not popped_up:
+            print(f"[시도 {attempt + 1}] 8초 내 로그인 성공/팝업 모두 미확인")
 
     print("경고: 여러 번 시도했지만 로그인 성공을 스크립트로 확인하지 못했습니다.")
 
@@ -98,9 +120,8 @@ def main():
         login(page, krx_id, krx_pw)
         print("로그인 후 현재 URL:", page.url)
 
-        page_text_check = page.inner_text("body")
-        if "로그아웃" not in page_text_check and "MDCCOMS001" in page.url:
-            print("경고: 로그인이 완료되지 않은 것으로 보입니다 (로그아웃 문구 없음). 스크린샷만 남기고 중단합니다.")
+        if not check_success(page):
+            print("경고: 로그인이 완료되지 않은 것으로 보입니다. 스크린샷만 남기고 중단합니다.")
             page.screenshot(path="/tmp/krx_stock_page_step1.png", full_page=True)
             browser.close()
             return
@@ -135,7 +156,6 @@ def main():
             except Exception as e:
                 print(f"  프레임 조회 실패: {e}")
 
-        # 종목명 입력창 추정: placeholder에 종목명/검색 등이 들어간 input을 모든 프레임에서 탐색
         search_input = None
         target_frame = None
         for frame in page.frames:
