@@ -26,3 +26,7 @@ jobs:
           cat /tmp/test.csv
           echo "-----------------------------"
           echo "비교: 2026-09-14 정규장 거래량=16582678, 합계=17776098"
+        continue-on-error: true
+
+      - name: 헤더별 요청 비교 진단
+        run: python3 scripts/diagnose_krx.py
