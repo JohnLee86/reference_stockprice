@@ -1,0 +1,29 @@
+yaml
+name: (테스트) pykrx 거래량 필드 확인
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test-download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 9/10~9/15 데이터 조회 및 출력
+        run: |
+          python3 scripts/download_krx_data.py --company "삼성전자" --ticker 005930 \
+            --from 20260910 --to 20260915 --output /tmp/test.csv
+          echo "----- 결과 CSV 전체 내용 -----"
+          cat /tmp/test.csv
+          echo "-----------------------------"
+          echo "비교: 2026-09-14 정규장 거래량=16582678, 합계=17776098"
