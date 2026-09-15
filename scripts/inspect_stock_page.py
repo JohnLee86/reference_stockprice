@@ -38,7 +38,20 @@ def login(page, krx_id, krx_pw):
     login_frame.locator("input[name='mbrId']").fill(krx_id)
     login_frame.locator("input[name='pw']").fill(krx_pw)
     login_frame.get_by_role("link", name="로그인", exact=True).click()
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(1500)
+
+    # "이미 로그인된 계정입니다" 팝업 처리 (이전 세션이 남아있을 때 발생)
+    for frame in page.frames:
+        try:
+            if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
+                print("기존 세션 발견 - '확인'을 눌러 새로 로그인합니다.")
+                frame.get_by_text("확인", exact=True).click()
+                page.wait_for_timeout(2000)
+                break
+        except Exception:
+            continue
+
+    page.wait_for_timeout(1500)
 
 
 def main():
