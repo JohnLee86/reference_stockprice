@@ -41,15 +41,34 @@ def login(page, krx_id, krx_pw):
     page.wait_for_timeout(1500)
 
     # "이미 로그인된 계정입니다" 팝업 처리 (이전 세션이 남아있을 때 발생)
+    # 팝업의 '확인'은 팝업만 닫고, 로그인은 다시 시도해야 완료되는 구조로 보임
+    popup_handled = False
     for frame in page.frames:
         try:
             if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
-                print("기존 세션 발견 - '확인'을 눌러 새로 로그인합니다.")
+                print("기존 세션 발견 - '확인'을 눌러 팝업을 닫습니다.")
                 frame.get_by_text("확인", exact=True).click()
+                popup_handled = True
                 page.wait_for_timeout(2000)
                 break
         except Exception:
             continue
+
+    if popup_handled:
+        login_frame = None
+        for frame in page.frames:
+            if frame.name == "COMS001_FRAME":
+                login_frame = frame
+                break
+        if login_frame is not None:
+            try:
+                print("팝업 닫은 후 로그인 재시도...")
+                login_frame.locator("input[name='mbrId']").fill(krx_id)
+                login_frame.locator("input[name='pw']").fill(krx_pw)
+                login_frame.get_by_role("link", name="로그인", exact=True).click()
+                page.wait_for_timeout(2500)
+            except Exception as e:
+                print(f"팝업 이후 재로그인 시도 중 오류: {e}", file=sys.stderr)
 
     page.wait_for_timeout(1500)
 
@@ -75,6 +94,13 @@ def main():
         print("로그인 시도 중...")
         login(page, krx_id, krx_pw)
         print("로그인 후 현재 URL:", page.url)
+
+        page_text_check = page.inner_text("body")
+        if "로그아웃" not in page_text_check and "MDCCOMS001" in page.url:
+            print("경고: 로그인이 완료되지 않은 것으로 보입니다 (로그아웃 문구 없음). 스크린샷만 남기고 중단합니다.")
+            page.screenshot(path="/tmp/krx_stock_page_step1.png", full_page=True)
+            browser.close()
+            return
 
         print("\n좌측 메뉴에서 '주식' -> '종목정보' -> '개별종목 종합정보' 클릭 시도...")
         try:
