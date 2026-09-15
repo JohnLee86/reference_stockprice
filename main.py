@@ -43,32 +43,37 @@ def process_company(company: str, ticker: str, today: str):
         last_date = pd.to_datetime(prev["날짜"]).max()
         from_date = (last_date + timedelta(days=1)).strftime("%Y%m%d")
 
-    ok = run([
-        "python3", str(SCRIPTS / "download_krx_data.py"),
-        "--company", company, "--ticker", ticker,
-        "--from", from_date, "--to", today.replace("-", ""),
-        "--output", str(raw_csv),
-    ])
-    if not ok:
-        print(f"[{company}] KRX 직접 조회 실패 - 네이버금융 경유로 재시도합니다.")
+    ok = True
+    if from_date > today.replace("-", ""):
+        print(f"[{company}] 이미 최신 데이터 보유 중 - 신규 다운로드 생략.")
+    else:
         ok = run([
             "python3", str(SCRIPTS / "download_krx_data.py"),
             "--company", company, "--ticker", ticker,
             "--from", from_date, "--to", today.replace("-", ""),
-            "--output", str(raw_csv), "--source", "naver",
+            "--output", str(raw_csv),
         ])
-    if not ok:
-        print(f"[{company}] 다운로드 실패(KRX/네이버 모두) - 건너뜁니다.")
-        return
+        if not ok:
+            print(f"[{company}] KRX 직접 조회 실패 - 네이버금융 경유로 재시도합니다.")
+            ok = run([
+                "python3", str(SCRIPTS / "download_krx_data.py"),
+                "--company", company, "--ticker", ticker,
+                "--from", from_date, "--to", today.replace("-", ""),
+                "--output", str(raw_csv), "--source", "naver",
+            ])
+        if not ok:
+            print(f"[{company}] 다운로드 실패(KRX/네이버 모두) - 건너뜁니다.")
+            return
 
-    calc_cmd = ["python3", str(SCRIPTS / "calculate_reference_price.py"),
-                "--company", company, "--new-data", str(raw_csv),
-                "--output", str(existing_xlsx)]
-    if existing_xlsx.exists():
-        calc_cmd += ["--existing", str(existing_xlsx)]
-    if not run(calc_cmd):
-        print(f"[{company}] 계산 실패 - 건너뜁니다.")
-        return
+    if raw_csv.exists():
+        calc_cmd = ["python3", str(SCRIPTS / "calculate_reference_price.py"),
+                    "--company", company, "--new-data", str(raw_csv),
+                    "--output", str(existing_xlsx)]
+        if existing_xlsx.exists():
+            calc_cmd += ["--existing", str(existing_xlsx)]
+        if not run(calc_cmd):
+            print(f"[{company}] 계산 실패 - 건너뜁니다.")
+            return
 
     # 오늘자 데이터가 실제로 있는지 확인 (휴장일이면 신규 행이 없을 수 있음)
     updated = pd.read_excel(existing_xlsx, sheet_name="계산용데이터")
