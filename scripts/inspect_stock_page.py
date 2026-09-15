@@ -22,6 +22,18 @@ TARGET_TICKER = "005930"
 TARGET_NAME = "삼성전자"
 
 
+def dismiss_existing_session_popup(page) -> bool:
+    for frame in page.frames:
+        try:
+            if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
+                frame.get_by_text("확인", exact=True).click()
+                page.wait_for_timeout(1500)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def login(page, krx_id, krx_pw):
     page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(1500)
@@ -32,51 +44,34 @@ def login(page, krx_id, krx_pw):
                 return f
         return None
 
-    login_frame = find_login_frame()
-    if login_frame is None:
-        print("오류: 로그인 프레임을 찾지 못했습니다.", file=sys.stderr)
-        sys.exit(1)
+    for attempt in range(4):
+        dismiss_existing_session_popup(page)  # 이전 시도에서 남은 팝업이 있으면 먼저 정리
 
-    login_frame.locator("input[name='mbrId']").fill(krx_id)
-    login_frame.locator("input[name='pw']").fill(krx_pw)
-    login_frame.get_by_role("link", name="로그인", exact=True).click()
-    page.wait_for_timeout(2000)
+        login_frame = find_login_frame()
+        if login_frame is None:
+            print(f"[시도 {attempt + 1}] 로그인 프레임을 찾지 못함 - 대기 후 재확인")
+            page.wait_for_timeout(1500)
+            continue
 
-    for attempt in range(3):
-        popup_found = False
-        for frame in page.frames:
-            try:
-                if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
-                    print(f"[시도 {attempt + 1}] 기존 세션 팝업 발견 - '확인' 클릭")
-                    frame.get_by_text("확인", exact=True).click()
-                    popup_found = True
-                    break
-            except Exception:
-                continue
+        try:
+            login_frame.locator("input[name='mbrId']").fill(krx_id)
+            login_frame.locator("input[name='pw']").fill(krx_pw)
+            login_frame.get_by_role("link", name="로그인", exact=True).click(timeout=5000)
+        except Exception as e:
+            print(f"[시도 {attempt + 1}] 로그인 버튼 클릭 실패(팝업에 막혔을 가능성): {type(e).__name__}")
+            dismiss_existing_session_popup(page)
+            page.wait_for_timeout(1000)
+            continue
 
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(2000)
+        dismiss_existing_session_popup(page)
+        page.wait_for_timeout(1500)
 
-        body_text = page.inner_text("body")
-        if "로그아웃" in body_text:
+        if "로그아웃" in page.inner_text("body"):
             print(f"[시도 {attempt + 1}] 로그인 성공 확인 ('로그아웃' 문구 발견)")
             return
 
-        print(f"[시도 {attempt + 1}] 아직 로그인 미완료 - 로그인 프레임 다시 확인 후 재시도")
-        login_frame = find_login_frame()
-        if login_frame is None:
-            page.wait_for_timeout(2000)
-            login_frame = find_login_frame()
-
-        if login_frame is not None:
-            try:
-                login_frame.locator("input[name='mbrId']").fill(krx_id)
-                login_frame.locator("input[name='pw']").fill(krx_pw)
-                login_frame.get_by_role("link", name="로그인", exact=True).click()
-                page.wait_for_timeout(2000)
-            except Exception as e:
-                print(f"재로그인 시도 중 오류: {e}", file=sys.stderr)
-        else:
-            print(f"[시도 {attempt + 1}] 로그인 프레임을 찾지 못함 (이미 로그인된 페이지일 수도 있음)")
+        print(f"[시도 {attempt + 1}] 아직 로그인 미완료 - 재시도")
 
     print("경고: 여러 번 시도했지만 로그인 성공을 스크립트로 확인하지 못했습니다.")
 
