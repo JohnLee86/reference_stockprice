@@ -1,6 +1,5 @@
 pandas
 openpyxl
 python-dateutil
-python-docx
 matplotlib
 playwright
