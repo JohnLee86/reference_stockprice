@@ -113,6 +113,77 @@ def parse_number(text: str):
     return None
 
 
+def _count_date_rows(table) -> int:
+    """표 안에서 '일자 형식' 셀로 시작하는 행이 몇 개인지 센다 (가상 스크롤 진행 상황 확인용)."""
+    try:
+        rows = table.locator("tr").all()
+    except Exception:
+        return 0
+    count = 0
+    for row in rows:
+        try:
+            first_td = row.locator("td").first
+            text = first_td.inner_text(timeout=500).strip()
+        except Exception:
+            continue
+        if re.match(r"^\d{4}/\d{2}/\d{2}$", text):
+            count += 1
+    return count
+
+
+def find_data_table(page):
+    """일자 형식 행을 하나 이상 포함한 표를 프레임 전체에서 찾아 반환한다 (없으면 None)."""
+    best_table = None
+    best_count = 0
+    for frame in page.frames:
+        try:
+            tables = frame.locator("table").all()
+        except Exception:
+            continue
+        for table in tables:
+            count = _count_date_rows(table)
+            if count > best_count:
+                best_count = count
+                best_table = table
+    return best_table, best_count
+
+
+def scroll_to_load_all_rows(page, company: str, max_iterations: int = 60) -> None:
+    """KRX [12003] 표는 가상 스크롤(virtual scroll) 그리드라서, 화면에 렌더링된 행만
+    DOM에 존재한다. 표의 마지막 행을 반복해서 스크롤에 노출시켜 전체 기간 데이터가
+    다 렌더링될 때까지(행 개수가 더 늘지 않을 때까지) 진행한다."""
+    table, prev_count = find_data_table(page)
+    if table is None:
+        print(f"[{company}] ⚠ 스크롤 대상 표를 찾지 못했습니다 (건너뜀)")
+        return
+
+    stable_rounds = 0
+    for i in range(max_iterations):
+        try:
+            rows = table.locator("tr").all()
+            if rows:
+                rows[-1].scroll_into_view_if_needed(timeout=2000)
+        except Exception:
+            pass
+        page.wait_for_timeout(300)
+
+        table, count = find_data_table(page)
+        if table is None:
+            break
+
+        if count <= prev_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+        prev_count = count
+
+        # 3번 연속 행 개수가 늘지 않으면 전체 렌더링이 끝난 것으로 간주
+        if stable_rounds >= 3:
+            break
+
+    print(f"[{company}] 스크롤 완료 - 렌더링된 행 수: {prev_count}")
+
+
 def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dict:
     """{날짜문자열(YYYY-MM-DD): (종가, 정규시장거래량)} 딕셔너리 반환.
 
@@ -480,6 +551,9 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] ⚠ 데이터 화면 로드 확인 실패 (계속 진행)")
 
     # ========== 데이터 추출 ==========
+    print(f"[{company}] 표 전체 렌더링을 위해 스크롤 중 (가상 스크롤 대응)...")
+    scroll_to_load_all_rows(page, company)
+
     print(f"[{company}] 데이터 추출 중...")
     
     from_dt = datetime.strptime(from_date, "%Y%m%d")
