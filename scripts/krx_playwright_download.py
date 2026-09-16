@@ -177,25 +177,22 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         return False
 
     search_input.click()
-    search_input.fill(company)
-    page.wait_for_timeout(1500)
-
-    suggestion_clicked = False
+    search_input.fill("")
+    page.wait_for_timeout(300)
     try:
-        for tag in ["li", "div", "td", "a"]:
-            loc = target_frame.locator(f"{tag}:text-is('{company}')")
-            if loc.count() > 0:
-                loc.first.click()
-                suggestion_clicked = True
-                break
+        search_input.press_sequentially(company, delay=120)
+    except Exception:
+        search_input.fill(company)
+    page.wait_for_timeout(1200)
+
+    # 자동완성 드롭다운에서 방향키+엔터로 첫 항목 선택 (클릭 방식보다 위젯 호환성이 높음)
+    try:
+        search_input.press("ArrowDown")
+        page.wait_for_timeout(300)
+        search_input.press("Enter")
     except Exception:
         pass
-    if not suggestion_clicked:
-        try:
-            search_input.press("Enter")
-        except Exception:
-            pass
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(1000)
 
     clicked_search_btn = False
     for frame in page.frames:
@@ -212,6 +209,55 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         return False
 
     page.wait_for_timeout(1500)
+
+    # 조회 결과가 실제로 원하는 종목코드인지 검증 (틀리면 저장하지 않고 실패 처리)
+    ticker_confirmed = False
+    for frame in page.frames:
+        try:
+            if f"({ticker})" in frame.inner_text("body"):
+                ticker_confirmed = True
+                break
+        except Exception:
+            continue
+    if not ticker_confirmed:
+        print(f"[{company}] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
+        return False
+
+    # 'Open' 버튼을 반복 클릭해 과거 데이터를 추가로 불러온다 (필요한 from_date까지, 또는 더 이상
+    # 새 행이 늘어나지 않을 때까지, 최대 40회 시도)
+    from_dt_check = datetime.strptime(from_date, "%Y%m%d")
+
+    def current_min_date():
+        earliest = None
+        for frame in page.frames:
+            try:
+                for d in frame.locator("td").all_inner_texts():
+                    if re.match(r"^\d{4}/\d{2}/\d{2}$", d.strip()):
+                        dt = datetime.strptime(d.strip(), "%Y/%m/%d")
+                        if earliest is None or dt < earliest:
+                            earliest = dt
+            except Exception:
+                continue
+        return earliest
+
+    for _ in range(40):
+        earliest = current_min_date()
+        if earliest is not None and earliest <= from_dt_check:
+            break
+        opened = False
+        for frame in page.frames:
+            try:
+                open_btn = frame.locator(":text-is('Open')")
+                if open_btn.count() > 0:
+                    open_btn.first.click()
+                    opened = True
+                    break
+            except Exception:
+                continue
+        if not opened:
+            break
+        page.wait_for_timeout(800)
+    print(f"[{company}] 과거 데이터 확보 후 가장 이른 날짜: {current_min_date()}")
 
     # '거래량' 헤더 클릭 -> 정규시장/애프터마켓 세부 컬럼 펼치기
     for frame in page.frames:
