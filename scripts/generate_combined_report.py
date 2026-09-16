@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 여러 회사의 계산 결과(누적 xlsx)를 하나의 PDF로 묶어서 생성한다.
-회사별로 별도 페이지(제목+표+그래프)로 구성된다.
+회사별로 별도 페이지(제목+표+그래프)로 구성되며, 회사마다 기준일이 다를 수 있다.
 
 사용법:
     python3 generate_combined_report.py \
-        --input "삼성전자:data/삼성전자_일별_기준주가.xlsx" \
-                "삼성전기:data/삼성전기_일별_기준주가.xlsx" \
+        --input "삼성전자:data/삼성전자_일별_기준주가.xlsx:2025-10-14" \
+                "삼성바이오로직스:data/삼성바이오로직스_일별_기준주가.xlsx:2026-01-23" \
         --output data/삼성그룹_통합_보고서.pdf
 """
 import argparse
@@ -19,12 +19,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 
-from generate_report import build_table_rows, render_report_page
+from generate_report import DEFAULT_BASELINE_DATE, build_table_rows, render_report_page
 
 KST = timezone(timedelta(hours=9))
 
 
-def add_company_page(pdf: PdfPages, company: str, xlsx_path: str):
+def add_company_page(pdf: PdfPages, company: str, xlsx_path: str, baseline_date: pd.Timestamp):
     df = pd.read_excel(xlsx_path, sheet_name="계산용데이터")
     df["날짜"] = pd.to_datetime(df["날짜"])
     df = df.sort_values("날짜").reset_index(drop=True)
@@ -32,10 +32,10 @@ def add_company_page(pdf: PdfPages, company: str, xlsx_path: str):
     latest = df.dropna(subset=["기준주가"]).iloc[-1]
     calc_date = latest["날짜"]
 
-    table_df, bold_after = build_table_rows(df, calc_date)
+    table_df, bold_after = build_table_rows(df, calc_date, baseline_date)
 
     fig = plt.figure(figsize=(210 / 25.4, 297 / 25.4))  # A4 (mm -> inch)
-    render_report_page(fig, company, calc_date, table_df, bold_after, df)
+    render_report_page(fig, company, calc_date, table_df, bold_after, df, baseline_date)
     pdf.savefig(fig)
     plt.close(fig)
 
@@ -55,7 +55,7 @@ def main():
         "--input",
         nargs="+",
         required=True,
-        help="'회사명:xlsx경로' 형식을 공백으로 구분해서 여러 개 전달",
+        help="'회사명:xlsx경로:기준일(YYYY-MM-DD)' 형식을 공백으로 구분해서 여러 개 전달",
     )
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
@@ -75,9 +75,9 @@ def main():
         plt.close(fig)
 
         for item in args.input:
-            company, xlsx_path = item.split(":", 1)
+            company, xlsx_path, baseline_str = item.split(":", 2)
             try:
-                add_company_page(pdf, company, xlsx_path)
+                add_company_page(pdf, company, xlsx_path, pd.Timestamp(baseline_str))
             except Exception as e:
                 failed.append(company)
                 add_error_page(pdf, company, str(e))
