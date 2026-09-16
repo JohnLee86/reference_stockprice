@@ -127,7 +127,12 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
                     tds = row.locator("td").all_inner_texts()
                 except Exception:
                     continue
-                if tds and re.match(r"^\d{4}/\d{2}/\d{2}$", tds[0].strip()):
+                if (
+                    tds
+                    and re.match(r"^\d{4}/\d{2}/\d{2}$", tds[0].strip())
+                    and len(tds) >= 4
+                    and parse_number(tds[1]) is not None
+                ):
                     date_count += 1
                 row_cells.append(tds)
             if date_count > best_date_count:
@@ -199,15 +204,29 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.press_sequentially(company, delay=120)
     except Exception:
         search_input.fill(company)
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(2000)
 
-    # 자동완성 드롭다운에서 방향키+엔터로 첫 항목 선택 (클릭 방식보다 위젯 호환성이 높음)
+    # 자동완성 드롭다운에서 회사명과 정확히 일치하는 항목을 클릭 (여러 태그 유형 대응)
+    suggestion_clicked = False
     try:
-        search_input.press("ArrowDown")
-        page.wait_for_timeout(300)
-        search_input.press("Enter")
-    except Exception:
-        pass
+        for tag in ["li", "div", "td", "a", "span"]:
+            loc = target_frame.locator(f"{tag}:text-is('{company}')")
+            if loc.count() > 0:
+                loc.first.click()
+                suggestion_clicked = True
+                print(f"[{company}] 자동완성 항목 클릭 성공 (tag={tag})")
+                break
+    except Exception as e:
+        print(f"[{company}] 자동완성 클릭 시도 중 오류: {e}")
+
+    if not suggestion_clicked:
+        print(f"[{company}] 자동완성 항목을 못 찾아 방향키+엔터로 대체 시도")
+        try:
+            search_input.press("ArrowDown")
+            page.wait_for_timeout(500)
+            search_input.press("Enter")
+        except Exception:
+            pass
     page.wait_for_timeout(1000)
 
     clicked_search_btn = False
@@ -247,13 +266,24 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         earliest = None
         for frame in page.frames:
             try:
-                for d in frame.locator("td").all_inner_texts():
-                    if re.match(r"^\d{4}/\d{2}/\d{2}$", d.strip()):
-                        dt = datetime.strptime(d.strip(), "%Y/%m/%d")
-                        if earliest is None or dt < earliest:
-                            earliest = dt
+                rows = frame.locator("tr").all()
             except Exception:
                 continue
+            for row in rows:
+                try:
+                    tds = row.locator("td").all_inner_texts()
+                except Exception:
+                    continue
+                if len(tds) < 4:
+                    continue
+                d = tds[0].strip()
+                if not re.match(r"^\d{4}/\d{2}/\d{2}$", d):
+                    continue
+                if parse_number(tds[1]) is None:  # 종가로 보이는 값이 없으면 시세 행이 아님 (예: 설립일 등)
+                    continue
+                dt = datetime.strptime(d, "%Y/%m/%d")
+                if earliest is None or dt < earliest:
+                    earliest = dt
         return earliest
 
     for _ in range(40):
