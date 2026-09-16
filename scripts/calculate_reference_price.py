@@ -5,7 +5,7 @@
 
 입력: 날짜/종가/거래량 컬럼을 가진 원자료(신규 다운로드분) + (선택) 기존 누적 파일
 처리: 문서 기준(2개월/1개월/5영업일 VWAP 평균 -> 반올림)에 따라 전체 이력에 대해
-      기준주가와 2025-10-14 대비 증가율을 계산
+      기준주가와 기준일 대비 증가율을 계산 (기준일은 회사별로 다를 수 있음)
 출력: 누적 계산용 엑셀 파일(.xlsx) + 최신 기준일 요약 JSON(stdout)
 
 의존성: pandas, openpyxl, python-dateutil
@@ -19,7 +19,7 @@ from decimal import ROUND_HALF_UP, Decimal
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-BASELINE_DATE = pd.Timestamp("2025-10-14")
+DEFAULT_BASELINE_DATE = pd.Timestamp("2025-10-14")
 
 REQUIRED_COLS = ["날짜", "종가", "거래량"]
 
@@ -108,8 +108,9 @@ def vwap_last_n_trading_days(df: pd.DataFrame, calc_date: pd.Timestamp, n: int) 
     return float((sub["종가"] * sub["거래량"]).sum() / sub["거래량"].sum())
 
 
-def compute_all(df: pd.DataFrame) -> pd.DataFrame:
-    """전체 이력에 대해 VWAP·기준주가를 계산한다(데이터가 부족한 초기 구간은 NaN)."""
+def compute_all(df: pd.DataFrame, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE) -> pd.DataFrame:
+    """전체 이력에 대해 VWAP·기준주가를 계산한다(데이터가 부족한 초기 구간은 NaN).
+    baseline_date: 상승률 산정 기준일 (회사별로 다를 수 있음 - 예: 상장일이 늦은 회사)."""
     df = df.sort_values("날짜").reset_index(drop=True)
     rows = []
     for _, row in df.iterrows():
@@ -139,19 +140,19 @@ def compute_all(df: pd.DataFrame) -> pd.DataFrame:
         )
     result = pd.DataFrame(rows)
 
-    # 2025-10-14 대비 증가율
-    baseline_rows = result.loc[result["날짜"] == BASELINE_DATE, "기준주가"]
+    # 기준일 대비 증가율 (기준일은 회사마다 다를 수 있음)
+    baseline_rows = result.loc[result["날짜"] == baseline_date, "기준주가"]
     baseline_price = (
         float(baseline_rows.iloc[0])
         if not baseline_rows.empty and pd.notna(baseline_rows.iloc[0])
         else None
     )
     if baseline_price:
-        result["10/14일_대비_증가율"] = result["기준주가"].apply(
+        result["기준일_대비_증가율"] = result["기준주가"].apply(
             lambda p: (p / baseline_price - 1) if pd.notna(p) else None
         )
     else:
-        result["10/14일_대비_증가율"] = None
+        result["기준일_대비_증가율"] = None
 
     return result, baseline_price
 
@@ -162,7 +163,11 @@ def main():
     ap.add_argument("--existing", help="기존 누적 파일 경로 (.xlsx), 없으면 생략")
     ap.add_argument("--new-data", help="신규 원자료 경로 (.csv/.xlsx), 없으면 생략")
     ap.add_argument("--output", required=True, help="출력 누적 엑셀 경로 (.xlsx)")
+    ap.add_argument("--baseline-date", default="2025-10-14",
+                    help="상승률 산정 기준일 (YYYY-MM-DD). 회사별로 다를 수 있음 (예: 상장일이 늦은 회사)")
     args = ap.parse_args()
+
+    baseline_date = pd.Timestamp(args.baseline_date)
 
     if not args.existing and not args.new_data:
         print("오류: --existing 또는 --new-data 중 최소 하나는 필요합니다.", file=sys.stderr)
@@ -177,7 +182,7 @@ def main():
     new_df = load_raw_table(args.new_data) if args.new_data else None
 
     merged = merge_data(existing_df, new_df)
-    computed, baseline_price = compute_all(merged)
+    computed, baseline_price = compute_all(merged, baseline_date)
 
     with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
         computed.to_excel(writer, sheet_name="계산용데이터", index=False)
@@ -188,7 +193,7 @@ def main():
         "company": args.company,
         "output_file": args.output,
         "total_rows": int(len(computed)),
-        "baseline_date": BASELINE_DATE.strftime("%Y-%m-%d"),
+        "baseline_date": baseline_date.strftime("%Y-%m-%d"),
         "baseline_reference_price": baseline_price,
         "latest": None,
     }
@@ -205,7 +210,7 @@ def main():
             "1개월VWAP": _num(latest["1개월VWAP"]),
             "5영업일VWAP": _num(latest["5영업일VWAP"]),
             "기준주가": _num(latest["기준주가"]),
-            "10/14일_대비_증가율": _num(latest["10/14일_대비_증가율"]),
+            "기준일_대비_증가율": _num(latest["기준일_대비_증가율"]),
         }
 
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
