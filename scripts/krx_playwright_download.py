@@ -173,23 +173,18 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
 
 
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
-    """'[12003] 개별종목 시세 추이' 화면을 이용해 조회기간을 한 번에 지정해서 가져온다.
-    이 화면은 거래량이 처음부터 전체/정규시장/애프터마켓으로 나뉘어 표시된다."""
+    """[12007]에서 회사를 검색/조회한 뒤, '일자별 시세' 옆 '+' 버튼으로
+    [12003] 개별종목 시세 추이 탭을 열어(종목이 그대로 이어짐) 원하는 기간을 조회한다."""
     print(f"\n--- [{company}] 처리 시작 ---")
 
-    # 메인 페이지로 이동 후, 좌측 메뉴에서 '종목시세 > 개별종목 시세추이'로 이동
     try:
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1500)
-        page.get_by_text("종목시세", exact=True).first.click()
-        page.wait_for_timeout(600)
-        page.get_by_text("개별종목 시세추이", exact=True).first.click()
-        page.wait_for_timeout(2000)
     except Exception as e:
-        print(f"[{company}] 화면 이동 실패: {e}")
+        print(f"[{company}] 페이지 이동 실패: {e}")
         return False
 
-    # 종목명 검색창 (12007과 동일 계열 위젯이지만 id 접미사가 다를 수 있어 부분일치로 탐색)
+    # 1단계: [12007]에서 종목명 검색 + 조회
     search_input = None
     target_frame = None
     for frame in page.frames:
@@ -237,25 +232,6 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             pass
     page.wait_for_timeout(800)
 
-    # 조회기간 시작일/종료일 입력 (KRX 공개 API와 동일한 필드명 strtDd/endDd로 추정, 부분일치 탐색)
-    filled_dates = False
-    for frame in page.frames:
-        try:
-            strt = frame.locator("input[name*='strtDd']")
-            end = frame.locator("input[name*='endDd']")
-            if strt.count() > 0 and end.count() > 0:
-                strt.first.fill(from_date)
-                end.first.fill(to_date)
-                filled_dates = True
-                print(f"[{company}] 조회기간 입력: {from_date} ~ {to_date}")
-                break
-        except Exception:
-            continue
-    if not filled_dates:
-        print(f"[{company}] 조회기간 입력창(strtDd/endDd)을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
-
-# '수정주가 적용'은 기본값(체크됨) 그대로 사용 - 건드리지 않음
-
     clicked_search_btn = False
     for frame in page.frames:
         try:
@@ -270,12 +246,12 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] '조회' 요소를 찾지 못했습니다.")
         return False
 
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(1500)
 
     ticker_confirmed = False
     for frame in page.frames:
         try:
-            if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
+            if f"({ticker})" in frame.inner_text("body"):
                 ticker_confirmed = True
                 break
         except Exception:
@@ -283,6 +259,62 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     if not ticker_confirmed:
         print(f"[{company}] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
         return False
+
+    # 2단계: '일자별 시세' 옆 '+' 클릭 -> [12003] 탭 열기 (종목명이 그대로 이어짐)
+    plus_clicked = False
+    try:
+        for frame in page.frames:
+            candidates = frame.locator(":text-is('+')")
+            if candidates.count() > 0:
+                candidates.first.click()
+                plus_clicked = True
+                break
+    except Exception as e:
+        print(f"[{company}] '+' 버튼 클릭 시도 중 오류: {e}")
+    if not plus_clicked:
+        print(f"[{company}] '일자별 시세' 옆 '+' 버튼을 찾지 못했습니다.")
+        return False
+    page.wait_for_timeout(2000)
+
+    # 3단계: [12003] 화면에서 조회기간(시작일/종료일) 입력 후 조회
+    filled_dates = False
+    for frame in page.frames:
+        try:
+            date_inputs = frame.locator("input[type='text']").all()
+        except Exception:
+            continue
+        matches = []
+        for el in date_inputs:
+            try:
+                val = el.input_value()
+            except Exception:
+                continue
+            if re.match(r"^\d{8}$", val or ""):
+                matches.append(el)
+        if len(matches) >= 2:
+            matches[0].fill(from_date)
+            matches[1].fill(to_date)
+            filled_dates = True
+            print(f"[{company}] 조회기간 입력: {from_date} ~ {to_date}")
+            break
+    if not filled_dates:
+        print(f"[{company}] 조회기간 입력창을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
+
+    clicked_search_btn2 = False
+    for frame in page.frames:
+        try:
+            loc = frame.locator(":text-is('조회')")
+            if loc.count() > 0:
+                loc.first.click()
+                clicked_search_btn2 = True
+                break
+        except Exception:
+            continue
+    if not clicked_search_btn2:
+        print(f"[{company}] [12003] 화면의 '조회' 버튼을 찾지 못했습니다.")
+        return False
+
+    page.wait_for_timeout(2500)
 
     from_dt = datetime.strptime(from_date, "%Y%m%d")
     to_dt = datetime.strptime(to_date, "%Y%m%d")
