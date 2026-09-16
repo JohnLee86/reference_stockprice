@@ -199,26 +199,43 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     screen_search = None
     for frame in page.frames:
         try:
-            candidates = frame.locator("input[id='CI-ALL-MENU-SEARCH-VALUE']").all()
+            el = frame.locator("input[id='jsMdiMenuSearchValue']")
+            if el.count() > 0:
+                screen_search = el.first
+                break
         except Exception:
             continue
-        for cand in candidates:
-            try:
-                if cand.is_visible():
-                    screen_search = cand
-                    break
-            except Exception:
-                continue
-        if screen_search is not None:
-            break
     if screen_search is None:
-        print(f"[{company}] 화면번호 검색창(보이는 것)을 찾지 못했습니다. (숨겨진 후보는 있었을 수 있음)")
+        print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
         return False
 
     screen_search.click()
-    screen_search.fill("12003", force=True)
+    screen_search.fill("12003")
     page.wait_for_timeout(800)
-    screen_search.press("Enter")
+
+    clicked_search_link = False
+    for frame in page.frames:
+        try:
+            btn = frame.locator("a[id='jsMdiMenuSearchButton']")
+            if btn.count() > 0:
+                btn.first.click()
+                clicked_search_link = True
+                break
+        except Exception:
+            continue
+    if not clicked_search_link:
+        screen_search.press("Enter")
+    page.wait_for_timeout(1000)
+
+    # 검색 결과 목록에서 '개별종목 시세추이' 항목 클릭
+    for frame in page.frames:
+        try:
+            cand = frame.locator(":text-is('개별종목 시세추이')")
+            if cand.count() > 0:
+                cand.first.click()
+                break
+        except Exception:
+            continue
     page.wait_for_timeout(2000)
 
     # 2단계: [12003] 화면에서 종목명 검색
