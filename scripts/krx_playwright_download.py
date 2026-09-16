@@ -208,29 +208,35 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.press_sequentially(company, delay=120)
     except Exception:
         search_input.fill(company)
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(1800)
 
-    suggestion_clicked = False
+    # 방향키+엔터를 기본 선택 방식으로 사용 (회사마다 자동완성 표시 형식이 달라 텍스트 매칭이 불안정함)
     try:
-        for tag in ["li", "div", "td", "a", "span"]:
-            loc = target_frame.locator(f"{tag}:text-is('{company}')")
-            if loc.count() > 0:
-                loc.first.click()
-                suggestion_clicked = True
-                print(f"[{company}] 자동완성 항목 클릭 성공 (tag={tag})")
-                break
-    except Exception as e:
-        print(f"[{company}] 자동완성 클릭 시도 중 오류: {e}")
+        search_input.press("ArrowDown")
+        page.wait_for_timeout(500)
+        search_input.press("Enter")
+    except Exception:
+        pass
+    page.wait_for_timeout(1000)
 
-    if not suggestion_clicked:
-        print(f"[{company}] 자동완성 항목을 못 찾아 방향키+엔터로 대체 시도")
+    # 혹시 위 방법으로 안 됐으면, 자동완성 목록에서 회사명과 정확히 일치하는 항목 클릭 시도
+    for frame in page.frames:
         try:
-            search_input.press("ArrowDown")
-            page.wait_for_timeout(500)
-            search_input.press("Enter")
+            if f"({ticker})" in frame.inner_text("body"):
+                break
         except Exception:
-            pass
-    page.wait_for_timeout(800)
+            continue
+    else:
+        try:
+            for tag in ["li", "div", "td", "a", "span"]:
+                loc = target_frame.locator(f"{tag}:text-is('{company}')")
+                if loc.count() > 0:
+                    loc.first.click()
+                    print(f"[{company}] 자동완성 항목 클릭으로 재시도 (tag={tag})")
+                    page.wait_for_timeout(800)
+                    break
+        except Exception as e:
+            print(f"[{company}] 자동완성 클릭 재시도 중 오류: {e}")
 
     clicked_search_btn = False
     for frame in page.frames:
@@ -326,16 +332,29 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     if not filled_dates:
         print(f"[{company}] 조회기간 입력창을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
 
+    page.wait_for_timeout(800)
+
     clicked_search_btn2 = False
     for frame in page.frames:
         try:
-            loc = frame.locator(":text-is('조회')")
-            if loc.count() > 0:
-                loc.first.click()
+            btn = frame.locator("a[id='jsSearchButton']")
+            if btn.count() > 0:
+                btn.first.click()
                 clicked_search_btn2 = True
                 break
         except Exception:
             continue
+    if not clicked_search_btn2:
+        for frame in page.frames:
+            try:
+                loc = frame.locator(":text-is('조회')")
+                cnt = loc.count()
+                if cnt > 0:
+                    loc.nth(cnt - 1).click()
+                    clicked_search_btn2 = True
+                    break
+            except Exception:
+                continue
     if not clicked_search_btn2:
         print(f"[{company}] [12003] '조회' 요소를 찾지 못했습니다.")
         return False
