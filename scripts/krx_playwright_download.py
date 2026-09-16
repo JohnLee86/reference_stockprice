@@ -199,26 +199,23 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     screen_search = None
     for frame in page.frames:
         try:
-            el = frame.locator("input[id='CI-ALL-MENU-SEARCH-VALUE']")
-            if el.count() > 0:
-                screen_search = el.first
-                break
+            candidates = frame.locator("input[id='CI-ALL-MENU-SEARCH-VALUE']").all()
         except Exception:
             continue
+        for cand in candidates:
+            try:
+                if cand.is_visible():
+                    screen_search = cand
+                    break
+            except Exception:
+                continue
+        if screen_search is not None:
+            break
     if screen_search is None:
-        print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
+        print(f"[{company}] 화면번호 검색창(보이는 것)을 찾지 못했습니다. (숨겨진 후보는 있었을 수 있음)")
         return False
 
-    try:
-        screen_search.wait_for(state="visible", timeout=8000)
-        screen_search.click()
-    except Exception:
-        print(f"[{company}] 화면번호 검색창이 안 보여 강제(force) 입력으로 시도합니다.")
-        try:
-            screen_search.click(force=True)
-        except Exception as e:
-            print(f"[{company}] 강제 클릭도 실패: {e}")
-            return False
+    screen_search.click()
     screen_search.fill("12003", force=True)
     page.wait_for_timeout(800)
     screen_search.press("Enter")
