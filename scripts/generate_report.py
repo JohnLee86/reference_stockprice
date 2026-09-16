@@ -3,9 +3,10 @@
 """
 계산 결과(누적 xlsx)로부터 A4 1장 기준주가 보고서(.pdf)를 생성한다.
 
-표: 2025-10-14 기준일 행(굵은 구분선) + 기준일~최근 1개월 이전까지의 월말 요약 행들
+표: 기준일 행(굵은 구분선) + 기준일~최근 1개월 이전까지의 월말 요약 행들
     (굵은 구분선) + 최근 1개월 일별 데이터 (최신 날짜가 맨 아래)
 그래프: 종가 추이(기준일부터), 최고점(빨강)/최저점(파랑)/마지막점(검정) 강조 표시
+기준일은 회사마다 다를 수 있음 (--baseline-date, 기본값 2025-10-14)
 
 사용법:
     python3 generate_report.py --company "삼성전자" \
@@ -48,7 +49,7 @@ except Exception:
 plt.rcParams["axes.unicode_minus"] = False
 
 KST = timezone(timedelta(hours=9))
-BASELINE_DATE = pd.Timestamp("2025-10-14")
+DEFAULT_BASELINE_DATE = pd.Timestamp("2025-10-14")
 
 HEADERS = ["날짜", "종가", "2개월", "1개월", "1주일", "기준 주가", "상승률"]
 
@@ -61,16 +62,16 @@ def fmt_pct(v):
     return "-" if pd.isna(v) else f"{v * 100:.1f}%"
 
 
-def build_table_rows(df: pd.DataFrame, calc_date: pd.Timestamp):
+def build_table_rows(df: pd.DataFrame, calc_date: pd.Timestamp, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE):
     """기준일 행 + (기준일~최근1개월 이전) 월말 요약 행 + 최근 1개월 일별 행을 만들고,
     굵은 구분선을 그어야 할 위치(0-base, 헤더 제외 데이터 행 인덱스)를 함께 반환한다."""
-    baseline_row = df[df["날짜"] == BASELINE_DATE]
+    baseline_row = df[df["날짜"] == baseline_date]
 
     one_month_start = (calc_date.replace(day=1) if calc_date.day == calc_date.days_in_month
                         else calc_date - pd.DateOffset(months=1) + pd.Timedelta(days=1))
     recent = df[(df["날짜"] >= one_month_start) & (df["날짜"] <= calc_date)]
 
-    hist = df[(df["날짜"] > BASELINE_DATE) & (df["날짜"] < one_month_start)].copy()
+    hist = df[(df["날짜"] > baseline_date) & (df["날짜"] < one_month_start)].copy()
     if not hist.empty:
         hist["ym"] = hist["날짜"].dt.to_period("M")
         monthly = hist.groupby("ym").tail(1).drop(columns="ym")
@@ -101,7 +102,7 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
             fmt_won(row["1개월VWAP"]),
             fmt_won(row["5영업일VWAP"]),
             fmt_won(row["기준주가"]),
-            fmt_pct(row["10/14일_대비_증가율"]),
+            fmt_pct(row["기준일_대비_증가율"]),
         ]
         for _, row in table_df.iterrows()
     ]
@@ -133,9 +134,9 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
     return tbl
 
 
-def build_chart(df: pd.DataFrame, ax) -> bool:
+def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE) -> bool:
     """전달받은 Axes 위에 종가 추이 그래프를 그린다 (기준일부터, 최고/최저/마지막 강조)."""
-    plot_df = df[df["날짜"] >= BASELINE_DATE].dropna(subset=["종가"]).reset_index(drop=True)
+    plot_df = df[df["날짜"] >= baseline_date].dropna(subset=["종가"]).reset_index(drop=True)
     if plot_df.empty:
         return False
 
@@ -185,7 +186,7 @@ def build_chart(df: pd.DataFrame, ax) -> bool:
 
 
 def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.DataFrame,
-                        bold_after: set, full_df: pd.DataFrame):
+                        bold_after: set, full_df: pd.DataFrame, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE):
     """A4 한 페이지(제목 + 표 + 그래프)를 주어진 figure 위에 그린다.
     개별 보고서(페이지 1장짜리 fig)와 통합 보고서(회사별로 반복 호출)에서 공용으로 쓴다."""
     gs = fig.add_gridspec(nrows=3, ncols=1, height_ratios=[0.07, 0.42, 0.48],
@@ -201,15 +202,16 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     draw_table(ax_table, table_df, bold_after)
 
     ax_chart = fig.add_subplot(gs[2])
-    chart_ok = build_chart(full_df, ax_chart)
+    chart_ok = build_chart(full_df, ax_chart, baseline_date)
     if not chart_ok:
         ax_chart.axis("off")
 
 
 def build_pdf(company: str, calc_date: pd.Timestamp, table_df: pd.DataFrame,
-              bold_after: set, full_df: pd.DataFrame, out_path: str):
+              bold_after: set, full_df: pd.DataFrame, out_path: str,
+              baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE):
     fig = plt.figure(figsize=(210 / 25.4, 297 / 25.4))  # A4 (mm -> inch)
-    render_report_page(fig, company, calc_date, table_df, bold_after, full_df)
+    render_report_page(fig, company, calc_date, table_df, bold_after, full_df, baseline_date)
     fig.savefig(out_path, format="pdf")
     plt.close(fig)
 
@@ -219,7 +221,11 @@ def main():
     ap.add_argument("--company", required=True)
     ap.add_argument("--input", required=True, help="계산 결과 누적 xlsx 경로")
     ap.add_argument("--output", required=True, help="출력 pdf 경로")
+    ap.add_argument("--baseline-date", default="2025-10-14",
+                    help="상승률 산정 기준일 (YYYY-MM-DD). 회사별로 다를 수 있음")
     args = ap.parse_args()
+
+    baseline_date = pd.Timestamp(args.baseline_date)
 
     df = pd.read_excel(args.input, sheet_name="계산용데이터")
     df["날짜"] = pd.to_datetime(df["날짜"])
@@ -228,9 +234,9 @@ def main():
     latest = df.dropna(subset=["기준주가"]).iloc[-1]
     calc_date = latest["날짜"]
 
-    table_df, bold_after = build_table_rows(df, calc_date)
+    table_df, bold_after = build_table_rows(df, calc_date, baseline_date)
 
-    build_pdf(args.company, calc_date, table_df, bold_after, df, args.output)
+    build_pdf(args.company, calc_date, table_df, bold_after, df, args.output, baseline_date)
     print(f"보고서 생성 완료: {args.output}")
 
 
