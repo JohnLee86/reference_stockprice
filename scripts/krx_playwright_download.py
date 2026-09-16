@@ -208,20 +208,23 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.press_sequentially(company, delay=120)
     except Exception:
         search_input.fill(company)
-    page.wait_for_timeout(1800)
 
-    # 자동완성 목록의 <li data-tp="종목코드">를 직접 지정해 클릭 (가장 정확하고 안정적인 방법)
+    # 자동완성 목록의 <li data-tp="종목코드">가 나타날 때까지 최대 8초 대기 후 클릭
     selected = False
-    for frame in page.frames:
-        try:
-            li = frame.locator(f"li[data-tp='{ticker}']")
-            if li.count() > 0:
-                li.first.locator("a").click()
-                selected = True
-                print(f"[{company}] data-tp='{ticker}' 항목 클릭 성공")
-                break
-        except Exception as e:
-            print(f"[{company}] data-tp 클릭 시도 중 오류: {e}")
+    for _ in range(16):
+        page.wait_for_timeout(500)
+        for frame in page.frames:
+            try:
+                li = frame.locator(f"li[data-tp='{ticker}']")
+                if li.count() > 0:
+                    li.first.locator("a").click()
+                    selected = True
+                    print(f"[{company}] data-tp='{ticker}' 항목 클릭 성공")
+                    break
+            except Exception:
+                continue
+        if selected:
+            break
     if not selected:
         print(f"[{company}] data-tp='{ticker}' 항목을 못 찾아 방향키+엔터로 대체 시도")
         try:
