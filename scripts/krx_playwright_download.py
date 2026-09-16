@@ -366,7 +366,8 @@ def select_custom_period(page, company: str) -> bool:
     return False
 
 
-def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:    """각 회사의 데이터를 조회하고 저장"""
+def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
+    """각 회사의 데이터를 조회하고 저장"""
     print(f"\n{'='*70}")
     print(f"[{company}] ({ticker}) 처리 시작")
     print(f"{'='*70}")
