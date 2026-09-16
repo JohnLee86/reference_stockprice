@@ -345,8 +345,28 @@ def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000
             print(f"[{company}] 계속 대기 중... ({int(elapsed_ms)}ms / {max_wait_ms}ms)")
 
 
-def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
-    """각 회사의 데이터를 조회하고 저장"""
+def select_custom_period(page, company: str) -> bool:
+    """기간 프리셋(1개월/3개월/6개월/1년) 대신 '직접입력' 모드로 전환한다.
+    이 라디오/버튼을 누르지 않으면 조회기간 입력칸에 값을 채워 넣어도 무시되고,
+    현재 선택된 프리셋 기간(예: 3개월)으로 그대로 조회된다."""
+    for frame in page.frames:
+        try:
+            candidates = frame.locator(":text-is('직접입력')").all()
+        except Exception:
+            continue
+        for el in candidates:
+            try:
+                el.click(timeout=2000)
+                page.wait_for_timeout(300)
+                print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
+                return True
+            except Exception:
+                continue
+    print(f"[{company}] ⚠ '직접입력' 버튼/라디오를 찾지 못했습니다 (프리셋 기간으로 조회될 수 있음)")
+    return False
+
+
+def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:    """각 회사의 데이터를 조회하고 저장"""
     print(f"\n{'='*70}")
     print(f"[{company}] ({ticker}) 처리 시작")
     print(f"{'='*70}")
@@ -472,8 +492,12 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     print(f"[{company}] ✓ 화면 전환 완료")
 
     # ========== 3단계: 조회기간 입력 ==========
+    # ========== 3단계: 조회기간 입력 ==========
     print(f"[{company}] 3단계: 조회기간 입력 중... ({from_date} ~ {to_date})")
-    
+
+    select_custom_period(page, company)
+    page.wait_for_timeout(500)
+
     filled_dates = False
     for frame in page.frames:
         try:
