@@ -102,8 +102,14 @@ def parse_number(text: str):
 
 
 def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dict:
-    """{날짜문자열(YYYY-MM-DD): (종가, 정규시장거래량)} 딕셔너리 반환."""
-    results = {}
+    """{날짜문자열(YYYY-MM-DD): (종가, 정규시장거래량)} 딕셔너리 반환.
+
+    페이지에는 이전 조회의 잔여 표(stale)나 로딩 중간 상태의 표가 함께 남아있을 수 있으므로,
+    '일자 형식의 셀을 가장 많이 포함한 표' 하나만 진짜 데이터로 간주해 사용한다.
+    """
+    best_table_rows = []
+    best_date_count = 0
+
     for frame in page.frames:
         try:
             tables = frame.locator("table").all()
@@ -114,40 +120,50 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
                 rows = table.locator("tr").all()
             except Exception:
                 continue
+            date_count = 0
+            row_cells = []
             for row in rows:
                 try:
                     tds = row.locator("td").all_inner_texts()
                 except Exception:
                     continue
-                if len(tds) < 4:
-                    continue
-                date_text = tds[0].strip()
-                if not re.match(r"^\d{4}/\d{2}/\d{2}$", date_text):
-                    continue
-                try:
-                    row_date = datetime.strptime(date_text, "%Y/%m/%d")
-                except ValueError:
-                    continue
-                if row_date < from_dt or row_date > to_dt:
-                    continue
+                if tds and re.match(r"^\d{4}/\d{2}/\d{2}$", tds[0].strip()):
+                    date_count += 1
+                row_cells.append(tds)
+            if date_count > best_date_count:
+                best_date_count = date_count
+                best_table_rows = row_cells
 
-                close = parse_number(tds[1])
-                if close is None:
-                    continue
+    results = {}
+    for tds in best_table_rows:
+        if len(tds) < 4:
+            continue
+        date_text = tds[0].strip()
+        if not re.match(r"^\d{4}/\d{2}/\d{2}$", date_text):
+            continue
+        try:
+            row_date = datetime.strptime(date_text, "%Y/%m/%d")
+        except ValueError:
+            continue
+        if row_date < from_dt or row_date > to_dt:
+            continue
 
-                nums = [n for n in (parse_number(t) for t in tds[2:]) if n is not None]
-                regular_volume = None
-                for i in range(len(nums) - 2):
-                    a, b, c = nums[i], nums[i + 1], nums[i + 2]
-                    if a > 0 and a == b + c:
-                        regular_volume = b
-                        break
-                if regular_volume is None:
-                    continue
+        close = parse_number(tds[1])
+        if close is None:
+            continue
 
-                key = row_date.strftime("%Y-%m-%d")
-                if key not in results:
-                    results[key] = (close, regular_volume)
+        nums = [n for n in (parse_number(t) for t in tds[2:]) if n is not None]
+        regular_volume = None
+        for i in range(len(nums) - 2):
+            a, b, c = nums[i], nums[i + 1], nums[i + 2]
+            if a > 0 and a == b + c:
+                regular_volume = b
+                break
+        if regular_volume is None:
+            continue
+
+        key = row_date.strftime("%Y-%m-%d")
+        results[key] = (close, regular_volume)  # 동일 날짜가 또 나오면 마지막 값으로 덮어씀
     return results
 
 
