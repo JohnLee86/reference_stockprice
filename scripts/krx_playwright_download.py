@@ -10,9 +10,9 @@ KRX Data Marketplace에 실제 계정으로 로그인한 뒤(1회), 여러 회�
 
 입력: --manifest로 지정한 JSON 파일
       [{"company": "삼성전자", "ticker": "005930",
-        "from_date": "20250801", "to_date": "20260915"}, ...]
+        "from_date": "20250801", "to_date": "20260915", "output": "data/..."}, ...]
 
-출력: 각 회사별로 data/{company}_원자료_임시.csv (날짜,종가,거래량)
+출력: 각 회사별로 output에 지정한 경로 (날짜,종가,거래량)
       거래량 컬럼에는 "정규시장" 거래량만 들어간다.
 
 자격증명은 환경변수로만 받는다: KRX_ID, KRX_PW
@@ -31,6 +31,7 @@ STOCK_PAGE_URL = "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?me
 
 
 def find_login_frame(page):
+    """로그인 프레임 찾기"""
     for f in page.frames:
         if f.name == "COMS001_FRAME":
             return f
@@ -38,6 +39,7 @@ def find_login_frame(page):
 
 
 def check_popup(page):
+    """팝업 메시지 확인"""
     for frame in page.frames:
         try:
             if frame.get_by_text("이미 로그인된 계정입니다").count() > 0:
@@ -48,6 +50,7 @@ def check_popup(page):
 
 
 def check_success(page) -> bool:
+    """로그인 성공 확인"""
     try:
         return "로그아웃" in page.inner_text("body")
     except Exception:
@@ -55,6 +58,8 @@ def check_success(page) -> bool:
 
 
 def login(page, krx_id, krx_pw) -> bool:
+    """KRX 로그인"""
+    print("[로그인] 로그인 페이지 이동 중...")
     page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_timeout(1500)
 
@@ -69,32 +74,39 @@ def login(page, krx_id, krx_pw) -> bool:
             continue
 
         if check_success(page):
+            print("[로그인] 이미 로그인된 상태")
             return True
 
         login_frame = find_login_frame(page)
         if login_frame is None:
+            print(f"[로그인] 시도 {attempt+1}/5 - 로그인 프레임 찾기 실패, 대기 중...")
             page.wait_for_timeout(1500)
             continue
 
         try:
+            print(f"[로그인] 시도 {attempt+1}/5 - 자격증명 입력 중...")
             login_frame.locator("input[name='mbrId']").fill(krx_id)
             login_frame.locator("input[name='pw']").fill(krx_pw)
             login_frame.get_by_role("link", name="로그인", exact=True).click(timeout=5000)
-        except Exception:
+        except Exception as e:
+            print(f"[로그인] 입력/클릭 실패: {e}")
             page.wait_for_timeout(1000)
             continue
 
         for _ in range(16):
             page.wait_for_timeout(500)
             if check_success(page):
+                print("[로그인] ✓ 로그인 성공!")
                 return True
             if check_popup(page):
                 break
 
+    print("[로그인] ✗ 최대 시도 횟수 초과", file=sys.stderr)
     return False
 
 
 def parse_number(text: str):
+    """숫자 파싱 (쉼표, % 제거)"""
     t = text.replace(",", "").replace("%", "").strip()
     if re.match(r"^-?\d+$", t):
         return int(t)
@@ -168,23 +180,117 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
             continue
 
         key = row_date.strftime("%Y-%m-%d")
-        results[key] = (close, regular_volume)  # 동일 날짜가 또 나오면 마지막 값으로 덮어씀
+        results[key] = (close, regular_volume)
     return results
 
 
+def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000) -> bool:
+    """
+    검색 결과에서 종목코드 찾아 클릭 (개선된 3가지 방법)
+    
+    방법 1: 정확한 텍스트 매칭 (text= selector)
+    방법 2: 셀 텍스트 포함 검색
+    방법 3: 행(row) 전체 텍스트 검색
+    
+    Args:
+        page: Playwright page 객체
+        ticker: 종목코드 (예: "005930")
+        company: 회사명 (로그 출력용)
+        max_wait_ms: 최대 대기 시간 (밀리초)
+    
+    Returns:
+        성공 시 True, 실패 시 False
+    """
+    print(f"[{company}] 검색 결과 대기 중 ({ticker})...")
+    
+    start_time = datetime.now()
+    attempt_count = 0
+    
+    while True:
+        elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
+        if elapsed_ms > max_wait_ms:
+            print(f"[{company}] ✗ 검색 결과 타임아웃 ({max_wait_ms}ms 초과)")
+            return False
+        
+        attempt_count += 1
+        
+        # 모든 frame에서 종목코드 검색
+        for frame in page.frames:
+            try:
+                # ========== 방법 1: text= selector로 직접 검색 ==========
+                try:
+                    cells = frame.locator(f"text={ticker}").all()
+                    if cells:
+                        for cell in cells:
+                            try:
+                                cell.click(timeout=2000)
+                                print(f"[{company}] ✓ 검색 결과 클릭 성공 (방법 1: text selector)")
+                                return True
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+                
+                # ========== 방법 2: 모든 td 셀 텍스트 검색 ==========
+                try:
+                    td_elements = frame.locator("td").all()
+                    if td_elements:
+                        for i, td_el in enumerate(td_elements):
+                            try:
+                                td_text = td_el.inner_text()
+                                if ticker in td_text.strip():
+                                    td_el.click(timeout=2000)
+                                    print(f"[{company}] ✓ 검색 결과 클릭 성공 (방법 2: td 텍스트 검색)")
+                                    return True
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+                
+                # ========== 방법 3: tr(행) 전체 텍스트 검색 ==========
+                try:
+                    rows = frame.locator("tr").all()
+                    if rows:
+                        for row in rows:
+                            try:
+                                row_text = row.inner_text()
+                                if ticker in row_text:
+                                    row.click(timeout=2000)
+                                    print(f"[{company}] ✓ 검색 결과 클릭 성공 (방법 3: row 텍스트 검색)")
+                                    return True
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+            
+            except Exception:
+                continue
+        
+        # 500ms 대기 후 재시도
+        page.wait_for_timeout(500)
+        
+        # 10회 시도마다 진행 상황 로그
+        if attempt_count % 10 == 0:
+            print(f"[{company}] 계속 대기 중... ({int(elapsed_ms)}ms / {max_wait_ms}ms)")
+
+
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
-    """상단 통합검색창(#jsTotSch)에서 회사명을 검색해 [12007]로 이동한 뒤,
-    화면번호 검색으로 [12003]으로 넘어가 조회기간을 지정해서 가져온다."""
-    print(f"\n--- [{company}] 처리 시작 ---")
+    """각 회사의 데이터를 조회하고 저장"""
+    print(f"\n{'='*70}")
+    print(f"[{company}] ({ticker}) 처리 시작")
+    print(f"{'='*70}")
 
     try:
+        print(f"[{company}] 1단계: 종목 선택 페이지로 이동...")
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(2000)
     except Exception as e:
-        print(f"[{company}] 페이지 이동 실패: {e}")
+        print(f"[{company}] ✗ 페이지 이동 실패: {e}")
         return False
 
-    # 1단계: 상단 통합검색(#jsTotSch)에서 회사명 검색 -> 결과에서 종목코드로 정확히 클릭
+    # ========== 1단계: 상단 통합검색에서 회사명 검색 ==========
+    print(f"[{company}] 회사명 검색 중: {company}")
+    
     search_box = None
     for frame in page.frames:
         try:
@@ -194,14 +300,16 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     if search_box is None:
-        print(f"[{company}] 상단 통합검색창을 찾지 못했습니다.")
+        print(f"[{company}] ✗ 상단 통합검색창을 찾지 못했습니다.")
         return False
 
     search_box.click()
     search_box.fill(company)
     page.wait_for_timeout(300)
 
+    # 검색 버튼 클릭
     clicked_search = False
     for frame in page.frames:
         try:
@@ -212,34 +320,21 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     if not clicked_search:
+        print(f"[{company}] Enter 키로 검색...")
         search_box.press("Enter")
 
-    # 결과 목록에서 종목코드 텍스트가 나타날 때까지 최대 8초 대기 후 클릭
-    result_clicked = False
-    for _ in range(16):
-        page.wait_for_timeout(500)
-        for frame in page.frames:
-            try:
-                cell = frame.locator(f"#jsTotSchArea :text-is('{ticker}')")
-                if cell.count() > 0:
-                    try:
-                        cell.first.locator("xpath=ancestor::tr[1]").click()
-                    except Exception:
-                        cell.first.click()
-                    result_clicked = True
-                    print(f"[{company}] 검색 결과에서 종목코드({ticker}) 클릭 성공")
-                    break
-            except Exception:
-                continue
-        if result_clicked:
-            break
-    if not result_clicked:
-        print(f"[{company}] 검색 결과에서 종목코드({ticker})를 찾지 못했습니다. 건너뜁니다.")
+    page.wait_for_timeout(1000)
+
+    # ========== 검색 결과에서 종목코드 클릭 (개선된 방식) ==========
+    if not find_search_result(page, ticker, company, max_wait_ms=12000):
+        print(f"[{company}] ✗ 검색 결과에서 종목코드를 찾지 못했습니다. 건너뜁니다.")
         return False
 
     page.wait_for_timeout(2000)
 
+    # 종목코드 확인
     ticker_confirmed = False
     for frame in page.frames:
         try:
@@ -248,11 +343,16 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     if not ticker_confirmed:
-        print(f"[{company}] [12007] 이동 후 종목코드({ticker}) 확인 실패. 건너뜁니다.")
+        print(f"[{company}] ✗ 종목 선택 화면에서 {ticker} 확인 실패")
         return False
+    
+    print(f"[{company}] ✓ 종목 선택 완료")
 
-    # 2단계: 화면번호 검색으로 [12003] 이동 (종목은 그대로 이어짐)
+    # ========== 2단계: 화면번호로 [12003] 이동 ==========
+    print(f"[{company}] 2단계: 개별종목 시세추이 화면(12003) 이동 중...")
+    
     screen_search = None
     for frame in page.frames:
         try:
@@ -262,8 +362,9 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     if screen_search is None:
-        print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
+        print(f"[{company}] ✗ 화면번호 검색창을 찾지 못했습니다.")
         return False
 
     screen_search.click()
@@ -280,10 +381,13 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     if not clicked_search_link:
         screen_search.press("Enter")
-    page.wait_for_timeout(1000)
+    
+    page.wait_for_timeout(1500)
 
+    # 개별종목 시세추이 메뉴 클릭
     for frame in page.frames:
         try:
             cand = frame.locator(":text-is('개별종목 시세추이')")
@@ -292,15 +396,20 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
+    
     page.wait_for_timeout(2000)
+    print(f"[{company}] ✓ 화면 전환 완료")
 
-    # 3단계: [12003]에서 조회기간(시작일/종료일) 입력 - 종목은 이미 이어져 있으므로 검색 생략
+    # ========== 3단계: 조회기간 입력 ==========
+    print(f"[{company}] 3단계: 조회기간 입력 중... ({from_date} ~ {to_date})")
+    
     filled_dates = False
     for frame in page.frames:
         try:
             date_inputs = frame.locator("input[type='text']").all()
         except Exception:
             continue
+        
         matches = []
         for el in date_inputs:
             try:
@@ -309,45 +418,53 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 continue
             if re.match(r"^\d{8}$", val or ""):
                 matches.append(el)
+        
         if len(matches) >= 2:
             matches[0].fill(from_date)
             matches[1].fill(to_date)
             filled_dates = True
-            print(f"[{company}] 조회기간 입력: {from_date} ~ {to_date}")
+            print(f"[{company}] ✓ 조회기간 입력 완료")
             break
+    
     if not filled_dates:
-        print(f"[{company}] 조회기간 입력창을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
+        print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (기본 기간 사용)")
 
     page.wait_for_timeout(800)
 
-    clicked_search_btn2 = False
+    # ========== 조회 버튼 클릭 ==========
+    clicked_search_btn = False
     for frame in page.frames:
         try:
             btn = frame.locator("a[id='jsSearchButton']")
             if btn.count() > 0:
                 btn.first.click()
-                clicked_search_btn2 = True
+                clicked_search_btn = True
                 break
         except Exception:
             continue
-    if not clicked_search_btn2:
+    
+    if not clicked_search_btn:
         for frame in page.frames:
             try:
                 loc = frame.locator(":text-is('조회')")
                 cnt = loc.count()
                 if cnt > 0:
                     loc.nth(cnt - 1).click()
-                    clicked_search_btn2 = True
+                    clicked_search_btn = True
                     break
             except Exception:
                 continue
-    if not clicked_search_btn2:
-        print(f"[{company}] [12003] '조회' 요소를 찾지 못했습니다.")
+    
+    if not clicked_search_btn:
+        print(f"[{company}] ✗ 조회 버튼을 찾지 못했습니다.")
         return False
 
-    # 큰 기간을 조회하면 응답이 늦을 수 있어, 최대 15초까지 폴링하며 확인
+    print(f"[{company}] 데이터 조회 진행 중 (로드 대기)...")
+    page.wait_for_timeout(2000)
+
+    # ========== 데이터 로드 확인 ==========
     ticker_confirmed2 = False
-    for _ in range(15):
+    for attempt in range(15):
         page.wait_for_timeout(1000)
         for frame in page.frames:
             try:
@@ -358,18 +475,22 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 continue
         if ticker_confirmed2:
             break
+    
     if not ticker_confirmed2:
-        print(f"[{company}] [12003] 종목코드({ticker}) 확인 실패. 건너뜁니다.")
-        return False
+        print(f"[{company}] ⚠ 데이터 화면 로드 확인 실패 (계속 진행)")
 
+    # ========== 데이터 추출 ==========
+    print(f"[{company}] 데이터 추출 중...")
+    
     from_dt = datetime.strptime(from_date, "%Y%m%d")
     to_dt = datetime.strptime(to_date, "%Y%m%d")
     rows = extract_regular_volume_rows(page, from_dt, to_dt)
 
     if not rows:
-        print(f"[{company}] 추출된 데이터가 없습니다 (기간: {from_date}~{to_date}).")
+        print(f"[{company}] ✗ 추출된 데이터가 없습니다 (기간: {from_date}~{to_date})")
         return False
 
+    # ========== CSV 저장 ==========
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8-sig") as f:
         f.write("날짜,종가,거래량\n")
@@ -377,7 +498,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             close, vol = rows[date_str]
             f.write(f"{date_str},{close},{vol}\n")
 
-    print(f"[{company}] {len(rows)}일치 저장 완료: {output_path}")
+    print(f"[{company}] ✓ 저장 완료: {len(rows)}일치 → {output_path}")
     return True
 
 
@@ -391,11 +512,15 @@ def main():
     krx_id = os.environ.get("KRX_ID")
     krx_pw = os.environ.get("KRX_PW")
     if not krx_id or not krx_pw:
-        print("오류: KRX_ID 또는 KRX_PW 환경변수가 설정되지 않았습니다.", file=sys.stderr)
+        print("✗ 오류: KRX_ID 또는 KRX_PW 환경변수가 설정되지 않았습니다.", file=sys.stderr)
         sys.exit(1)
 
     with open(args.manifest, encoding="utf-8") as f:
         manifest = json.load(f)
+
+    print("\n" + "="*70)
+    print("KRX 데이터 자동 다운로드 시작")
+    print("="*70)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -408,23 +533,38 @@ def main():
         )
         page = context.new_page()
 
-        print("로그인 시도 중...")
+        print("\n[로그인] KRX 로그인 시도 중...")
         if not login(page, krx_id, krx_pw):
-            print("오류: 로그인에 실패했습니다.", file=sys.stderr)
+            print("✗ 로그인 실패", file=sys.stderr)
+            browser.close()
             sys.exit(1)
-        print("로그인 성공.")
 
         overall_ok = True
-        for entry in manifest:
+        success_count = 0
+        fail_count = 0
+        
+        for i, entry in enumerate(manifest, 1):
+            print(f"\n[진행률] {i}/{len(manifest)}")
             output_path = Path(entry["output"])
             ok = process_company(
                 page, entry["company"], entry["ticker"],
                 entry["from_date"], entry["to_date"], output_path,
             )
-            if not ok:
+            if ok:
+                success_count += 1
+            else:
+                fail_count += 1
                 overall_ok = False
 
         browser.close()
+
+    # ========== 최종 결과 ==========
+    print("\n" + "="*70)
+    print("처리 완료")
+    print("="*70)
+    print(f"✓ 성공: {success_count}개")
+    print(f"✗ 실패: {fail_count}개")
+    print("="*70)
 
     if not overall_ok:
         sys.exit(1)
