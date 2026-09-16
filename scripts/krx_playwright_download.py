@@ -173,72 +173,18 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
 
 
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
-    """'화면번호/화면명 검색'창에 12003을 입력해 '[12003] 개별종목 시세 추이' 화면으로 바로 이동한 뒤,
-    종목명 검색 + 조회기간 입력 + 조회를 한 번에 수행한다."""
+    """[12007]에서 종목을 먼저 확실히 검색/조회한 뒤, 화면번호 검색으로 [12003]으로 이동한다.
+    [12003]은 방금 조회한 종목을 그대로 이어받으므로 거기서 다시 검색하지 않는다."""
     print(f"\n--- [{company}] 처리 시작 ---")
 
     try:
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2000)
     except Exception as e:
         print(f"[{company}] 페이지 이동 실패: {e}")
         return False
 
-    # 사이드바가 접혀있을 수 있어 햄버거(☰) 아이콘이 있으면 눌러서 펼친다
-    try:
-        for frame in page.frames:
-            hamburger = frame.locator("button:has-text('☰'), .hamburger, [class*='menu-toggle'], [class*='gnb-toggle']")
-            if hamburger.count() > 0 and hamburger.first.is_visible():
-                hamburger.first.click()
-                page.wait_for_timeout(1000)
-                break
-    except Exception:
-        pass
-
-    # 1단계: 화면번호 검색으로 [12003] 이동
-    screen_search = None
-    for frame in page.frames:
-        try:
-            el = frame.locator("input[id='jsMdiMenuSearchValue']")
-            if el.count() > 0:
-                screen_search = el.first
-                break
-        except Exception:
-            continue
-    if screen_search is None:
-        print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
-        return False
-
-    screen_search.click()
-    screen_search.fill("12003")
-    page.wait_for_timeout(800)
-
-    clicked_search_link = False
-    for frame in page.frames:
-        try:
-            btn = frame.locator("a[id='jsMdiMenuSearchButton']")
-            if btn.count() > 0:
-                btn.first.click()
-                clicked_search_link = True
-                break
-        except Exception:
-            continue
-    if not clicked_search_link:
-        screen_search.press("Enter")
-    page.wait_for_timeout(1000)
-
-    # 검색 결과 목록에서 '개별종목 시세추이' 항목 클릭
-    for frame in page.frames:
-        try:
-            cand = frame.locator(":text-is('개별종목 시세추이')")
-            if cand.count() > 0:
-                cand.first.click()
-                break
-        except Exception:
-            continue
-    page.wait_for_timeout(2000)
-
-    # 2단계: [12003] 화면에서 종목명 검색
+    # 1단계: [12007]에서 종목명 검색 + 조회 (안정적으로 동작 확인됨)
     search_input = None
     target_frame = None
     for frame in page.frames:
@@ -252,7 +198,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             continue
 
     if search_input is None:
-        print(f"[{company}] [12003] 화면의 종목검색기 입력창을 찾지 못했습니다.")
+        print(f"[{company}] [12007] 종목검색기 입력창을 찾지 못했습니다.")
         return False
 
     search_input.click()
@@ -286,7 +232,77 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             pass
     page.wait_for_timeout(800)
 
-    # 3단계: 조회기간(시작일/종료일) 입력 - 8자리 날짜값을 가진 입력창 두 개를 찾는다
+    clicked_search_btn = False
+    for frame in page.frames:
+        try:
+            loc = frame.locator(":text-is('조회')")
+            if loc.count() > 0:
+                loc.first.click()
+                clicked_search_btn = True
+                break
+        except Exception:
+            continue
+    if not clicked_search_btn:
+        print(f"[{company}] [12007] '조회' 요소를 찾지 못했습니다.")
+        return False
+
+    page.wait_for_timeout(1500)
+
+    ticker_confirmed = False
+    for frame in page.frames:
+        try:
+            if f"({ticker})" in frame.inner_text("body"):
+                ticker_confirmed = True
+                break
+        except Exception:
+            continue
+    if not ticker_confirmed:
+        print(f"[{company}] [12007] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
+        return False
+
+    # 2단계: 화면번호 검색으로 [12003] 이동 (종목은 그대로 이어짐)
+    screen_search = None
+    for frame in page.frames:
+        try:
+            el = frame.locator("input[id='jsMdiMenuSearchValue']")
+            if el.count() > 0:
+                screen_search = el.first
+                break
+        except Exception:
+            continue
+    if screen_search is None:
+        print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
+        return False
+
+    screen_search.click()
+    screen_search.fill("12003")
+    page.wait_for_timeout(800)
+
+    clicked_search_link = False
+    for frame in page.frames:
+        try:
+            btn = frame.locator("a[id='jsMdiMenuSearchButton']")
+            if btn.count() > 0:
+                btn.first.click()
+                clicked_search_link = True
+                break
+        except Exception:
+            continue
+    if not clicked_search_link:
+        screen_search.press("Enter")
+    page.wait_for_timeout(1000)
+
+    for frame in page.frames:
+        try:
+            cand = frame.locator(":text-is('개별종목 시세추이')")
+            if cand.count() > 0:
+                cand.first.click()
+                break
+        except Exception:
+            continue
+    page.wait_for_timeout(2000)
+
+    # 3단계: [12003]에서 조회기간(시작일/종료일) 입력 - 종목은 이미 이어져 있으므로 검색 생략
     filled_dates = False
     for frame in page.frames:
         try:
@@ -310,33 +326,32 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     if not filled_dates:
         print(f"[{company}] 조회기간 입력창을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
 
-    # 4단계: 조회
-    clicked_search_btn = False
+    clicked_search_btn2 = False
     for frame in page.frames:
         try:
             loc = frame.locator(":text-is('조회')")
             if loc.count() > 0:
                 loc.first.click()
-                clicked_search_btn = True
+                clicked_search_btn2 = True
                 break
         except Exception:
             continue
-    if not clicked_search_btn:
-        print(f"[{company}] '조회' 요소를 찾지 못했습니다.")
+    if not clicked_search_btn2:
+        print(f"[{company}] [12003] '조회' 요소를 찾지 못했습니다.")
         return False
 
     page.wait_for_timeout(2500)
 
-    ticker_confirmed = False
+    ticker_confirmed2 = False
     for frame in page.frames:
         try:
             if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
-                ticker_confirmed = True
+                ticker_confirmed2 = True
                 break
         except Exception:
             continue
-    if not ticker_confirmed:
-        print(f"[{company}] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
+    if not ticker_confirmed2:
+        print(f"[{company}] [12003] 종목코드({ticker}) 확인 실패. 건너뜁니다.")
         return False
 
     from_dt = datetime.strptime(from_date, "%Y%m%d")
