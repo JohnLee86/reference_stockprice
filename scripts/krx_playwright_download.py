@@ -210,13 +210,27 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.fill(company)
     page.wait_for_timeout(1800)
 
-    # 방향키+엔터를 기본 선택 방식으로 사용 (회사마다 자동완성 표시 형식이 달라 텍스트 매칭이 불안정함)
+    # 방향키+엔터를 기본 선택 방식으로 사용하되, 종목코드까지 포함해 정확히 일치하는
+    # 항목("005930/삼성전자" 형식)이 있으면 그것을 우선 클릭한다 (유사한 이름의 다른 회사와 혼동 방지)
+    exact_clicked = False
     try:
-        search_input.press("ArrowDown")
-        page.wait_for_timeout(500)
-        search_input.press("Enter")
-    except Exception:
-        pass
+        for tag in ["li", "div", "td", "a", "span"]:
+            loc = target_frame.locator(f"{tag}:has-text('{ticker}/{company}')")
+            if loc.count() > 0:
+                loc.first.click()
+                exact_clicked = True
+                print(f"[{company}] 자동완성 정확 매칭 클릭 성공 (tag={tag})")
+                break
+    except Exception as e:
+        print(f"[{company}] 자동완성 정확 매칭 시도 중 오류: {e}")
+
+    if not exact_clicked:
+        try:
+            search_input.press("ArrowDown")
+            page.wait_for_timeout(500)
+            search_input.press("Enter")
+        except Exception:
+            pass
     page.wait_for_timeout(1000)
 
     # 혹시 위 방법으로 안 됐으면, 자동완성 목록에서 회사명과 정확히 일치하는 항목 클릭 시도
@@ -359,16 +373,19 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] [12003] '조회' 요소를 찾지 못했습니다.")
         return False
 
-    page.wait_for_timeout(2500)
-
+    # 큰 기간을 조회하면 응답이 늦을 수 있어, 최대 15초까지 폴링하며 확인
     ticker_confirmed2 = False
-    for frame in page.frames:
-        try:
-            if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
-                ticker_confirmed2 = True
-                break
-        except Exception:
-            continue
+    for _ in range(15):
+        page.wait_for_timeout(1000)
+        for frame in page.frames:
+            try:
+                if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
+                    ticker_confirmed2 = True
+                    break
+            except Exception:
+                continue
+        if ticker_confirmed2:
+            break
     if not ticker_confirmed2:
         print(f"[{company}] [12003] 종목코드({ticker}) 확인 실패. 건너뜁니다.")
         return False
