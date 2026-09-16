@@ -188,7 +188,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     screen_search = None
     for frame in page.frames:
         try:
-            el = frame.locator("input[name='CI-ALL-MENU-SEARCH-VALUE']")
+            el = frame.locator("input[id='CI-ALL-MENU-SEARCH-VALUE']")
             if el.count() > 0:
                 screen_search = el.first
                 break
