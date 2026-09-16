@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 KRX Data Marketplace에 실제 계정으로 로그인한 뒤(1회), 여러 회사를 순회하며
-'개별종목 종합정보' 화면에서 일자별 종가와 "정규시장" 거래량을 추출한다.
+'개별종목 시세 추이' 화면에서 일자별 종가와 "정규시장" 거래량을 추출한다.
 
 정규시장/애프터마켓 거래량은 header 텍스트가 아니라, 각 행에서
 "총계 = 정규시장 + 애프터마켓"이 성립하는 연속된 세 숫자(트리플렛)를 찾아
@@ -173,19 +173,28 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
 
 
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
+    """'[12003] 개별종목 시세 추이' 화면을 이용해 조회기간을 한 번에 지정해서 가져온다.
+    이 화면은 거래량이 처음부터 전체/정규시장/애프터마켓으로 나뉘어 표시된다."""
     print(f"\n--- [{company}] 처리 시작 ---")
+
+    # 메인 페이지로 이동 후, 좌측 메뉴에서 '종목시세 > 개별종목 시세추이'로 이동
     try:
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(1500)
+        page.get_by_text("종목시세", exact=True).first.click()
+        page.wait_for_timeout(600)
+        page.get_by_text("개별종목 시세추이", exact=True).first.click()
         page.wait_for_timeout(2000)
     except Exception as e:
-        print(f"[{company}] 페이지 이동 실패: {e}")
+        print(f"[{company}] 화면 이동 실패: {e}")
         return False
 
+    # 종목명 검색창 (12007과 동일 계열 위젯이지만 id 접미사가 다를 수 있어 부분일치로 탐색)
     search_input = None
     target_frame = None
     for frame in page.frames:
         try:
-            el = frame.locator("input[name='tboxisuCd_finder_stkisu0_0']")
+            el = frame.locator("input[name*='tboxisuCd_finder']")
             if el.count() > 0:
                 search_input = el.first
                 target_frame = frame
@@ -206,7 +215,6 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.fill(company)
     page.wait_for_timeout(2000)
 
-    # 자동완성 드롭다운에서 회사명과 정확히 일치하는 항목을 클릭 (여러 태그 유형 대응)
     suggestion_clicked = False
     try:
         for tag in ["li", "div", "td", "a", "span"]:
@@ -227,7 +235,26 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             search_input.press("Enter")
         except Exception:
             pass
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(800)
+
+    # 조회기간 시작일/종료일 입력 (KRX 공개 API와 동일한 필드명 strtDd/endDd로 추정, 부분일치 탐색)
+    filled_dates = False
+    for frame in page.frames:
+        try:
+            strt = frame.locator("input[name*='strtDd']")
+            end = frame.locator("input[name*='endDd']")
+            if strt.count() > 0 and end.count() > 0:
+                strt.first.fill(from_date)
+                end.first.fill(to_date)
+                filled_dates = True
+                print(f"[{company}] 조회기간 입력: {from_date} ~ {to_date}")
+                break
+        except Exception:
+            continue
+    if not filled_dates:
+        print(f"[{company}] 조회기간 입력창(strtDd/endDd)을 찾지 못했습니다 - 기본 기간으로 진행합니다.")
+
+# '수정주가 적용'은 기본값(체크됨) 그대로 사용 - 건드리지 않음
 
     clicked_search_btn = False
     for frame in page.frames:
@@ -243,13 +270,12 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] '조회' 요소를 찾지 못했습니다.")
         return False
 
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2000)
 
-    # 조회 결과가 실제로 원하는 종목코드인지 검증 (틀리면 저장하지 않고 실패 처리)
     ticker_confirmed = False
     for frame in page.frames:
         try:
-            if f"({ticker})" in frame.inner_text("body"):
+            if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
                 ticker_confirmed = True
                 break
         except Exception:
@@ -257,64 +283,6 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     if not ticker_confirmed:
         print(f"[{company}] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
         return False
-
-    # 'Open' 버튼을 반복 클릭해 과거 데이터를 추가로 불러온다 (필요한 from_date까지, 또는 더 이상
-    # 새 행이 늘어나지 않을 때까지, 최대 40회 시도)
-    from_dt_check = datetime.strptime(from_date, "%Y%m%d")
-
-    def current_min_date():
-        earliest = None
-        for frame in page.frames:
-            try:
-                rows = frame.locator("tr").all()
-            except Exception:
-                continue
-            for row in rows:
-                try:
-                    tds = row.locator("td").all_inner_texts()
-                except Exception:
-                    continue
-                if len(tds) < 4:
-                    continue
-                d = tds[0].strip()
-                if not re.match(r"^\d{4}/\d{2}/\d{2}$", d):
-                    continue
-                if parse_number(tds[1]) is None:  # 종가로 보이는 값이 없으면 시세 행이 아님 (예: 설립일 등)
-                    continue
-                dt = datetime.strptime(d, "%Y/%m/%d")
-                if earliest is None or dt < earliest:
-                    earliest = dt
-        return earliest
-
-    for _ in range(40):
-        earliest = current_min_date()
-        if earliest is not None and earliest <= from_dt_check:
-            break
-        opened = False
-        for frame in page.frames:
-            try:
-                open_btn = frame.locator(":text-is('Open')")
-                if open_btn.count() > 0:
-                    open_btn.first.click()
-                    opened = True
-                    break
-            except Exception:
-                continue
-        if not opened:
-            break
-        page.wait_for_timeout(800)
-    print(f"[{company}] 과거 데이터 확보 후 가장 이른 날짜: {current_min_date()}")
-
-    # '거래량' 헤더 클릭 -> 정규시장/애프터마켓 세부 컬럼 펼치기
-    for frame in page.frames:
-        try:
-            header_cell = frame.locator(":text-is('거래량')").first
-            if header_cell.count() if hasattr(header_cell, "count") else 0:
-                header_cell.click()
-                break
-        except Exception:
-            continue
-    page.wait_for_timeout(1500)
 
     from_dt = datetime.strptime(from_date, "%Y%m%d")
     to_dt = datetime.strptime(to_date, "%Y%m%d")
