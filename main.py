@@ -91,7 +91,7 @@ def update_company_data(company: str) -> tuple[bool, bool]:
 
 def send_individual_report(company: str) -> bool:
     existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
-    report_path = DATA_DIR / f"{company}_일별_기준주가_보고서.docx"
+    report_path = DATA_DIR / f"{company}_일별_기준주가_보고서.pdf"
 
     if not run(["python3", str(SCRIPTS / "generate_report.py"),
                 "--company", company, "--input", str(existing_xlsx),
@@ -107,7 +107,7 @@ def send_individual_report(company: str) -> bool:
 
 
 def send_combined_report(companies: list[str]) -> bool:
-    combined_path = DATA_DIR / "삼성그룹_통합_보고서.docx"
+    combined_path = DATA_DIR / "삼성그룹_통합_보고서.pdf"
     input_args = []
     for company in companies:
         xlsx_path = DATA_DIR / f"{company}_일별_기준주가.xlsx"
