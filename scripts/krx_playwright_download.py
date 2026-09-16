@@ -205,28 +205,41 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     search_input.fill("")
     page.wait_for_timeout(300)
     try:
-        search_input.press_sequentially(ticker, delay=120)  # 회사명 대신 종목코드로 검색 (모호함 방지)
+        search_input.press_sequentially(company, delay=150)
     except Exception:
-        search_input.fill(ticker)
+        search_input.fill(company)
 
-    # 자동완성 목록의 <li data-tp="종목코드">가 나타날 때까지 최대 8초 대기 후 클릭
+    # 자동완성 목록의 <li data-nm="회사명">이 나타날 때까지 최대 8초 대기 후 클릭
     selected = False
     for _ in range(16):
         page.wait_for_timeout(500)
         for frame in page.frames:
             try:
-                li = frame.locator(f"li[data-tp='{ticker}']")
+                li = frame.locator(f"li[data-nm='{company}']")
                 if li.count() > 0:
                     li.first.locator("a").click()
                     selected = True
-                    print(f"[{company}] data-tp='{ticker}' 항목 클릭 성공")
+                    print(f"[{company}] data-nm='{company}' 항목 클릭 성공")
                     break
             except Exception:
                 continue
         if selected:
             break
     if not selected:
-        print(f"[{company}] data-tp='{ticker}' 항목을 못 찾아 방향키+엔터로 대체 시도")
+        # 진단: 자동완성 목록 자체가 떴는지, 떴다면 어떤 항목들이 있는지 확인
+        try:
+            for frame in page.frames:
+                items = frame.locator(".search-auto li").all()
+                if items:
+                    names = [it.get_attribute("data-nm") for it in items[:10]]
+                    print(f"[{company}] 자동완성 목록에 {len(items)}개 항목 존재, data-nm들: {names}")
+                    break
+            else:
+                print(f"[{company}] 자동완성 목록(.search-auto li)이 전혀 뜨지 않았습니다.")
+        except Exception as e:
+            print(f"[{company}] 진단 중 오류: {e}")
+
+        print(f"[{company}] data-nm='{company}' 항목을 못 찾아 방향키+엔터로 대체 시도")
         try:
             search_input.press("ArrowDown")
             page.wait_for_timeout(500)
