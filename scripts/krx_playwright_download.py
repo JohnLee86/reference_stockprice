@@ -184,6 +184,17 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] 페이지 이동 실패: {e}")
         return False
 
+    # 사이드바가 접혀있을 수 있어 햄버거(☰) 아이콘이 있으면 눌러서 펼친다
+    try:
+        for frame in page.frames:
+            hamburger = frame.locator("button:has-text('☰'), .hamburger, [class*='menu-toggle'], [class*='gnb-toggle']")
+            if hamburger.count() > 0 and hamburger.first.is_visible():
+                hamburger.first.click()
+                page.wait_for_timeout(1000)
+                break
+    except Exception:
+        pass
+
     # 1단계: 화면번호 검색으로 [12003] 이동
     screen_search = None
     for frame in page.frames:
@@ -199,13 +210,16 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         return False
 
     try:
-        screen_search.wait_for(state="visible", timeout=10000)
-    except Exception as e:
-        print(f"[{company}] 화면번호 검색창이 화면에 보이지 않습니다: {e}")
-        return False
-
-    screen_search.click()
-    screen_search.fill("12003")
+        screen_search.wait_for(state="visible", timeout=8000)
+        screen_search.click()
+    except Exception:
+        print(f"[{company}] 화면번호 검색창이 안 보여 강제(force) 입력으로 시도합니다.")
+        try:
+            screen_search.click(force=True)
+        except Exception as e:
+            print(f"[{company}] 강제 클릭도 실패: {e}")
+            return False
+    screen_search.fill("12003", force=True)
     page.wait_for_timeout(800)
     screen_search.press("Enter")
     page.wait_for_timeout(2000)
@@ -349,7 +363,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            viewport={"width": 1600, "height": 1100},
+            viewport={"width": 1920, "height": 2400},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
