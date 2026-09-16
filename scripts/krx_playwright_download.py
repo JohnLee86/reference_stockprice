@@ -179,7 +179,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     try:
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(3000)
     except Exception as e:
         print(f"[{company}] 페이지 이동 실패: {e}")
         return False
@@ -196,6 +196,12 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             continue
     if screen_search is None:
         print(f"[{company}] 화면번호 검색창을 찾지 못했습니다.")
+        return False
+
+    try:
+        screen_search.wait_for(state="visible", timeout=10000)
+    except Exception as e:
+        print(f"[{company}] 화면번호 검색창이 화면에 보이지 않습니다: {e}")
         return False
 
     screen_search.click()
