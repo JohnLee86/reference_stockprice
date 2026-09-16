@@ -5,7 +5,8 @@
                                                   (2) 전체 회사 통합 보고서+메일
 
 대상 회사/종목은 config.json에서 읽는다. "individual_email": true 로 표시된 회사는
-별도로 단독 보고서 메일도 받는다 (현재는 삼성전자만 해당).
+별도로 단독 보고서 메일도 받는다 (현재는 삼성전자만 해당). "baseline_date"를 지정한
+회사는 상승률 산정 기준일을 그 날짜로 사용한다 (예: 상장일이 늦은 회사, 기본값 2025-10-14).
 
 데이터 수집은 KRX Data Marketplace에 실제 계정으로 로그인하는 Playwright 스크립트
 (krx_playwright_download.py)를 통해 이루어진다. 로그인은 1회만 하고, 그 세션으로
@@ -63,7 +64,7 @@ def build_manifest(companies: list[dict], today: str) -> list[dict]:
     return manifest
 
 
-def update_company_data(company: str) -> tuple[bool, bool]:
+def update_company_data(company: str, baseline_date: str) -> tuple[bool, bool]:
     """(성공 여부, 오늘자 신규 데이터 있음 여부). 다운로드는 이미 완료된 상태로 가정하고 계산만 수행."""
     existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
     raw_csv = DATA_DIR / f"{company}_원자료_임시.csv"
@@ -71,7 +72,7 @@ def update_company_data(company: str) -> tuple[bool, bool]:
     if raw_csv.exists():
         calc_cmd = ["python3", str(SCRIPTS / "calculate_reference_price.py"),
                     "--company", company, "--new-data", str(raw_csv),
-                    "--output", str(existing_xlsx)]
+                    "--output", str(existing_xlsx), "--baseline-date", baseline_date]
         if existing_xlsx.exists():
             calc_cmd += ["--existing", str(existing_xlsx)]
         if not run(calc_cmd):
@@ -89,13 +90,13 @@ def update_company_data(company: str) -> tuple[bool, bool]:
     return True, has_today
 
 
-def send_individual_report(company: str) -> bool:
+def send_individual_report(company: str, baseline_date: str) -> bool:
     existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
     report_path = DATA_DIR / f"{company}_일별_기준주가_보고서.pdf"
 
     if not run(["python3", str(SCRIPTS / "generate_report.py"),
                 "--company", company, "--input", str(existing_xlsx),
-                "--output", str(report_path)]):
+                "--output", str(report_path), "--baseline-date", baseline_date]):
         print(f"[{company}] 개별 보고서 생성 실패.")
         return False
 
@@ -106,13 +107,13 @@ def send_individual_report(company: str) -> bool:
     return True
 
 
-def send_combined_report(companies: list[str]) -> bool:
+def send_combined_report(companies: list[tuple[str, str]]) -> bool:
     combined_path = DATA_DIR / "삼성그룹_통합_보고서.pdf"
     input_args = []
-    for company in companies:
+    for company, baseline_date in companies:
         xlsx_path = DATA_DIR / f"{company}_일별_기준주가.xlsx"
         if xlsx_path.exists():
-            input_args.append(f"{company}:{xlsx_path}")
+            input_args.append(f"{company}:{xlsx_path}:{baseline_date}")
 
     if not input_args:
         print("통합 보고서: 사용할 수 있는 회사 데이터가 없습니다.")
@@ -152,19 +153,20 @@ def main():
     individual_targets = []
     for entry in config["companies"]:
         company = entry["company"]
-        ok, has_today = update_company_data(company)
+        baseline_date = entry.get("baseline_date", "2025-10-14")
+        ok, has_today = update_company_data(company, baseline_date)
         if not ok:
             all_ok = False
             continue
         if has_today:
-            ready_companies.append(company)
+            ready_companies.append((company, baseline_date))
             if entry.get("individual_email"):
-                individual_targets.append(company)
+                individual_targets.append((company, baseline_date))
         else:
             print(f"[{company}] 오늘({today}) 신규 데이터 없음 (휴장일 등) - 보고서 대상에서 제외.")
 
-    for company in individual_targets:
-        if not send_individual_report(company):
+    for company, baseline_date in individual_targets:
+        if not send_individual_report(company, baseline_date):
             all_ok = False
 
     if ready_companies:
