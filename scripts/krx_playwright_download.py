@@ -173,8 +173,8 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
 
 
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
-    """[12007]에서 종목을 먼저 확실히 검색/조회한 뒤, 화면번호 검색으로 [12003]으로 이동한다.
-    [12003]은 방금 조회한 종목을 그대로 이어받으므로 거기서 다시 검색하지 않는다."""
+    """상단 통합검색창(#jsTotSch)에서 회사명을 검색해 [12007]로 이동한 뒤,
+    화면번호 검색으로 [12003]으로 넘어가 조회기간을 지정해서 가져온다."""
     print(f"\n--- [{company}] 처리 시작 ---")
 
     try:
@@ -184,81 +184,61 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] 페이지 이동 실패: {e}")
         return False
 
-    # 1단계: [12007]에서 종목명 검색 + 조회 (안정적으로 동작 확인됨)
-    search_input = None
-    target_frame = None
+    # 1단계: 상단 통합검색(#jsTotSch)에서 회사명 검색 -> 결과에서 종목코드로 정확히 클릭
+    search_box = None
     for frame in page.frames:
         try:
-            el = frame.locator("input[name*='tboxisuCd_finder']")
+            el = frame.locator("input[id='jsTotSch']")
             if el.count() > 0:
-                search_input = el.first
-                target_frame = frame
+                search_box = el.first
                 break
         except Exception:
             continue
-
-    if search_input is None:
-        print(f"[{company}] [12007] 종목검색기 입력창을 찾지 못했습니다.")
+    if search_box is None:
+        print(f"[{company}] 상단 통합검색창을 찾지 못했습니다.")
         return False
 
-    search_input.click()
-    search_input.fill("")
+    search_box.click()
+    search_box.fill(company)
     page.wait_for_timeout(300)
-    search_input.fill(company)  # 한글은 한 글자씩 입력하면 IME 조합 문제로 깨지므로 fill()로 한번에 입력
-    page.wait_for_timeout(500)
 
-    # 자동완성 목록의 <li data-nm="회사명">이 나타날 때까지 최대 8초 대기 후 클릭
-    selected = False
+    clicked_search = False
+    for frame in page.frames:
+        try:
+            btn = frame.locator("button[id='jsTotSchBtn']")
+            if btn.count() > 0:
+                btn.first.click()
+                clicked_search = True
+                break
+        except Exception:
+            continue
+    if not clicked_search:
+        search_box.press("Enter")
+
+    # 결과 목록에서 종목코드 텍스트가 나타날 때까지 최대 8초 대기 후 클릭
+    result_clicked = False
     for _ in range(16):
         page.wait_for_timeout(500)
         for frame in page.frames:
             try:
-                li = frame.locator(f"li[data-nm='{company}']")
-                if li.count() > 0:
-                    li.first.locator("a").click()
-                    selected = True
-                    print(f"[{company}] data-nm='{company}' 항목 클릭 성공")
+                cell = frame.locator(f"#jsTotSchArea :text-is('{ticker}')")
+                if cell.count() > 0:
+                    try:
+                        cell.first.locator("xpath=ancestor::tr[1]").click()
+                    except Exception:
+                        cell.first.click()
+                    result_clicked = True
+                    print(f"[{company}] 검색 결과에서 종목코드({ticker}) 클릭 성공")
                     break
             except Exception:
                 continue
-        if selected:
+        if result_clicked:
             break
-    if not selected:
-        try:
-            for frame in page.frames:
-                items = frame.locator(".search-auto li").all()
-                if items:
-                    names = [it.get_attribute("data-nm") for it in items[:10]]
-                    print(f"[{company}] 자동완성 목록에 {len(items)}개 항목 존재, data-nm들: {names}")
-                    break
-            else:
-                print(f"[{company}] 자동완성 목록(.search-auto li)이 전혀 뜨지 않았습니다.")
-        except Exception as e:
-            print(f"[{company}] 진단 중 오류: {e}")
-        print(f"[{company}] data-nm='{company}' 항목을 못 찾아 방향키+엔터로 대체 시도")
-        try:
-            search_input.press("ArrowDown")
-            page.wait_for_timeout(500)
-            search_input.press("Enter")
-        except Exception:
-            pass
-    page.wait_for_timeout(1000)
-
-    clicked_search_btn = False
-    for frame in page.frames:
-        try:
-            loc = frame.locator(":text-is('조회')")
-            if loc.count() > 0:
-                loc.first.click()
-                clicked_search_btn = True
-                break
-        except Exception:
-            continue
-    if not clicked_search_btn:
-        print(f"[{company}] [12007] '조회' 요소를 찾지 못했습니다.")
+    if not result_clicked:
+        print(f"[{company}] 검색 결과에서 종목코드({ticker})를 찾지 못했습니다. 건너뜁니다.")
         return False
 
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2000)
 
     ticker_confirmed = False
     for frame in page.frames:
@@ -269,7 +249,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         except Exception:
             continue
     if not ticker_confirmed:
-        print(f"[{company}] [12007] 검색/선택 실패로 보입니다 - 화면에서 종목코드({ticker})를 확인하지 못했습니다. 건너뜁니다.")
+        print(f"[{company}] [12007] 이동 후 종목코드({ticker}) 확인 실패. 건너뜁니다.")
         return False
 
     # 2단계: 화면번호 검색으로 [12003] 이동 (종목은 그대로 이어짐)
