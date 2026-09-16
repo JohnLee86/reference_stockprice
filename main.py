@@ -40,7 +40,9 @@ def build_manifest(companies: list[dict], today: str) -> list[dict]:
     for entry in companies:
         company, ticker = entry["company"], entry["ticker"]
         existing_xlsx = DATA_DIR / f"{company}_일별_기준주가.xlsx"
-        from_date = "20250801"
+        # 기준주가는 2025-10-14부터 필요하고, 2개월 VWAP 산정을 위해 그보다 앞선
+        # 데이터가 필요하므로(최소 2025-08-15부터) 여유를 두어 2025-01-01부터 수집한다.
+        from_date = "20250101"
         if existing_xlsx.exists():
             prev = pd.read_excel(existing_xlsx, sheet_name="계산용데이터")
             last_date = pd.to_datetime(prev["날짜"]).max()
