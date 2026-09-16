@@ -205,9 +205,9 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     search_input.fill("")
     page.wait_for_timeout(300)
     try:
-        search_input.press_sequentially(company, delay=120)
+        search_input.press_sequentially(ticker, delay=120)  # 회사명 대신 종목코드로 검색 (모호함 방지)
     except Exception:
-        search_input.fill(company)
+        search_input.fill(ticker)
 
     # 자동완성 목록의 <li data-tp="종목코드">가 나타날 때까지 최대 8초 대기 후 클릭
     selected = False
