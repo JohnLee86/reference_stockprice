@@ -210,21 +210,20 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         search_input.fill(company)
     page.wait_for_timeout(1800)
 
-    # 방향키+엔터를 기본 선택 방식으로 사용하되, 종목코드까지 포함해 정확히 일치하는
-    # 항목("005930/삼성전자" 형식)이 있으면 그것을 우선 클릭한다 (유사한 이름의 다른 회사와 혼동 방지)
-    exact_clicked = False
-    try:
-        for tag in ["li", "div", "td", "a", "span"]:
-            loc = target_frame.locator(f"{tag}:has-text('{ticker}/{company}')")
-            if loc.count() > 0:
-                loc.first.click()
-                exact_clicked = True
-                print(f"[{company}] 자동완성 정확 매칭 클릭 성공 (tag={tag})")
+    # 자동완성 목록의 <li data-tp="종목코드">를 직접 지정해 클릭 (가장 정확하고 안정적인 방법)
+    selected = False
+    for frame in page.frames:
+        try:
+            li = frame.locator(f"li[data-tp='{ticker}']")
+            if li.count() > 0:
+                li.first.locator("a").click()
+                selected = True
+                print(f"[{company}] data-tp='{ticker}' 항목 클릭 성공")
                 break
-    except Exception as e:
-        print(f"[{company}] 자동완성 정확 매칭 시도 중 오류: {e}")
-
-    if not exact_clicked:
+        except Exception as e:
+            print(f"[{company}] data-tp 클릭 시도 중 오류: {e}")
+    if not selected:
+        print(f"[{company}] data-tp='{ticker}' 항목을 못 찾아 방향키+엔터로 대체 시도")
         try:
             search_input.press("ArrowDown")
             page.wait_for_timeout(500)
@@ -232,25 +231,6 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         except Exception:
             pass
     page.wait_for_timeout(1000)
-
-    # 혹시 위 방법으로 안 됐으면, 자동완성 목록에서 회사명과 정확히 일치하는 항목 클릭 시도
-    for frame in page.frames:
-        try:
-            if f"({ticker})" in frame.inner_text("body"):
-                break
-        except Exception:
-            continue
-    else:
-        try:
-            for tag in ["li", "div", "td", "a", "span"]:
-                loc = target_frame.locator(f"{tag}:text-is('{company}')")
-                if loc.count() > 0:
-                    loc.first.click()
-                    print(f"[{company}] 자동완성 항목 클릭으로 재시도 (tag={tag})")
-                    page.wait_for_timeout(800)
-                    break
-        except Exception as e:
-            print(f"[{company}] 자동완성 클릭 재시도 중 오류: {e}")
 
     clicked_search_btn = False
     for frame in page.frames:
