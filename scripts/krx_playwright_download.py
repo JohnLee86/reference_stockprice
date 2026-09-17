@@ -345,26 +345,35 @@ def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000
             print(f"[{company}] 계속 대기 중... ({int(elapsed_ms)}ms / {max_wait_ms}ms)")
 
 
-def select_custom_period(page, company: str) -> bool:
+def select_custom_period(page, company: str, max_wait_ms: int = 8000) -> bool:
     """기간 프리셋(1개월/3개월/6개월/1년) 대신 '직접입력' 모드로 전환한다.
     이 라디오/버튼을 누르지 않으면 조회기간 입력칸에 값을 채워 넣어도 무시되고,
-    현재 선택된 프리셋 기간(예: 3개월)으로 그대로 조회된다."""
-    for frame in page.frames:
-        try:
-            candidates = frame.locator(":text-is('직접입력')").all()
-        except Exception:
-            continue
-        for el in candidates:
+    현재 선택된 프리셋 기간(예: 3개월)으로 그대로 조회된다.
+    화면이 완전히 준비되기 전에 클릭을 시도하면 실패할 수 있어, 몇 초간 반복 재시도한다."""
+    start_time = datetime.now()
+    while True:
+        elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
+        if elapsed_ms > max_wait_ms:
+            print(f"[{company}] ⚠ '직접입력' 버튼/라디오를 찾지 못했습니다 ({max_wait_ms}ms 초과, 프리셋 기간으로 조회될 수 있음)")
+            return False
+
+        for frame in page.frames:
             try:
-                el.click(timeout=2000)
-                page.wait_for_timeout(300)
-                print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
-                return True
+                candidates = frame.locator(":text-is('직접입력')").all()
             except Exception:
                 continue
-    print(f"[{company}] ⚠ '직접입력' 버튼/라디오를 찾지 못했습니다 (프리셋 기간으로 조회될 수 있음)")
-    return False
+            for el in candidates:
+                try:
+                    if not el.is_visible():
+                        continue
+                    el.click(timeout=1500)
+                    page.wait_for_timeout(400)
+                    print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
+                    return True
+                except Exception:
+                    continue
 
+        page.wait_for_timeout(400)
 
 def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
     """각 회사의 데이터를 조회하고 저장"""
@@ -493,40 +502,58 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     print(f"[{company}] ✓ 화면 전환 완료")
 
     # ========== 3단계: 조회기간 입력 ==========
-    # ========== 3단계: 조회기간 입력 ==========
     print(f"[{company}] 3단계: 조회기간 입력 중... ({from_date} ~ {to_date})")
 
-    select_custom_period(page, company)
-    page.wait_for_timeout(500)
-
     filled_dates = False
-    for frame in page.frames:
-        try:
-            date_inputs = frame.locator("input[type='text']").all()
-        except Exception:
-            continue
-        
-        matches = []
-        for el in date_inputs:
+    for attempt in range(2):  # '직접입력' 클릭이 씹혀서 값이 되돌아가는 경우 한 번 더 재시도
+        select_custom_period(page, company)
+        page.wait_for_timeout(500)
+
+        date_els = None
+        for frame in page.frames:
             try:
-                val = el.input_value()
+                date_inputs = frame.locator("input[type='text']").all()
             except Exception:
                 continue
-            if re.match(r"^\d{8}$", val or ""):
-                matches.append(el)
-        
-        if len(matches) >= 2:
-            matches[0].fill(from_date)
-            matches[1].fill(to_date)
+
+            matches = []
+            for el in date_inputs:
+                try:
+                    val = el.input_value()
+                except Exception:
+                    continue
+                if re.match(r"^\d{8}$", val or ""):
+                    matches.append(el)
+
+            if len(matches) >= 2:
+                date_els = matches
+                break
+
+        if date_els is None:
+            print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (시도 {attempt + 1}/2)")
+            continue
+
+        date_els[0].fill(from_date)
+        date_els[1].fill(to_date)
+        page.wait_for_timeout(300)
+
+        # '직접입력'이 실제로 먹혔는지: 값이 그대로 유지되는지 재확인 (사이트가 프리셋으로
+        # 되돌리면 값이 원래대로 리셋되거나 입력칸이 readonly라 fill이 씹힐 수 있음)
+        actual_from = date_els[0].input_value()
+        actual_to = date_els[1].input_value()
+        if actual_from == from_date and actual_to == to_date:
             filled_dates = True
-            print(f"[{company}] ✓ 조회기간 입력 완료")
+            print(f"[{company}] ✓ 조회기간 입력 완료 및 값 확인됨")
             break
-    
+        else:
+            print(f"[{company}] ⚠ 조회기간 값이 유지되지 않음 "
+                  f"(기대: {from_date}~{to_date}, 실제: {actual_from}~{actual_to}) - 재시도 (시도 {attempt + 1}/2)")
+
     if not filled_dates:
-        print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (기본 기간 사용)")
+        print(f"[{company}] ⚠ 조회기간 입력에 실패했습니다 (기본 프리셋 기간으로 조회될 수 있음)")
 
     page.wait_for_timeout(800)
-
+      
     # ========== 조회 버튼 클릭 ==========
     clicked_search_btn = False
     for frame in page.frames:
