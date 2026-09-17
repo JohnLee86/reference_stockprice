@@ -38,6 +38,15 @@ jobs:
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python3 main.py
 
+      - name: 디버그 스크린샷 업로드 (조회기간 입력 디버깅용)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krx-debug-snapshot
+          path: data/debug/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: 갱신된 누적 데이터 커밋
         run: |
           git config user.name "krx-report-bot"
