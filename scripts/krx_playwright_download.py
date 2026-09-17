@@ -505,6 +505,16 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
         if start_input is None:
             print(f"[{company}] ⚠ 조회기간 입력창(#strtDd/#endDd)을 찾지 못했습니다 (시도 {attempt + 1}/3)")
+            if debug:
+                for fi, frame in enumerate(page.frames):
+                    try:
+                        info = frame.eval_on_selector_all(
+                            "input[type='text']",
+                            "els => els.map(e => `id=${e.id}|name=${e.name}|value=${e.value}`)"
+                        )
+                        print(f"[{company}]   frame{fi} ({frame.url}) 텍스트 입력창 목록: {info}")
+                    except Exception as e:
+                        print(f"[{company}]   frame{fi} 조회 실패: {e}")
             page.wait_for_timeout(500)
             continue
 
