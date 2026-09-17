@@ -566,7 +566,21 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     page.wait_for_timeout(800)
 
-    # ========== 조회 버튼 클릭 ==========
+    # ========== 조회 버튼 클릭 (응답을 직접 가로채서 실제로 몇 건 왔는지 확인) ==========
+    response_holder = {}
+
+    def _capture_response(response):
+        if "getJsonData.cmd" in response.url and response.request.method == "POST":
+            try:
+                data = response.json()
+                counts = {k: len(v) for k, v in data.items() if isinstance(v, list)}
+                response_holder["counts"] = counts
+                print(f"[{company}] 🌐 서버 응답 도착 - 리스트 필드별 건수: {counts}")
+            except Exception as e:
+                print(f"[{company}] 응답 파싱 실패: {e}")
+
+    page.on("response", _capture_response)
+
     clicked_search_btn = False
     for frame in page.frames:
         try:
@@ -591,31 +605,39 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 continue
 
     if not clicked_search_btn:
+        page.remove_listener("response", _capture_response)
         print(f"[{company}] ✗ 조회 버튼을 찾지 못했습니다.")
         return False
 
-    print(f"[{company}] 데이터 조회 진행 중 (로드 대기)...")
-    page.wait_for_timeout(2000)
+    print(f"[{company}] 데이터 조회 진행 중 (서버 응답 대기)...")
 
-    # ========== 데이터 로드 확인 ==========
-    ticker_confirmed2 = False
-    for attempt in range(15):
-        page.wait_for_timeout(1000)
-        for frame in page.frames:
-            try:
-                if f"({ticker})" in frame.inner_text("body") or ticker in frame.inner_text("body"):
-                    ticker_confirmed2 = True
-                    break
-            except Exception:
-                continue
-        if ticker_confirmed2:
+    # 서버 응답(JSON)이 도착할 때까지 대기 -> 그 응답의 실제 건수만큼 표(DOM)에
+    # 반영될 때까지 대기. 응답 건수를 확인 못하면 예전처럼 고정 시간만 대기(안전망).
+    expected_count = None
+    for _ in range(20):
+        page.wait_for_timeout(500)
+        if response_holder.get("counts"):
+            expected_count = max(response_holder["counts"].values())
             break
 
-    if not ticker_confirmed2:
-        print(f"[{company}] ⚠ 데이터 화면 로드 확인 실패 (계속 진행)")
+    if expected_count:
+        print(f"[{company}] 서버 응답 건수: {expected_count}건 - 화면(표) 반영 대기 중...")
+        for _ in range(30):
+            _, current_count = find_data_table(page)
+            if current_count >= expected_count:
+                print(f"[{company}] ✓ 화면 반영 완료 (렌더링된 행 수: {current_count})")
+                break
+            page.wait_for_timeout(500)
+        else:
+            print(f"[{company}] ⚠ {expected_count}건 중 일부만 화면에 반영된 채로 진행")
+    else:
+        print(f"[{company}] ⚠ 응답 건수를 확인하지 못했습니다 - 기본 대기로 진행")
+        page.wait_for_timeout(3000)
+
+    page.remove_listener("response", _capture_response)
 
     # ========== 데이터 추출 ==========
-    print(f"[{company}] 표 전체 렌더링을 위해 스크롤 중 (가상 스크롤 대응)...")
+    print(f"[{company}] 표 전체 렌더링 확인을 위해 한 번 더 스크롤 중 (안전망)...")
     scroll_to_load_all_rows(page, company)
 
     print(f"[{company}] 데이터 추출 중...")
