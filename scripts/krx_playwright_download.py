@@ -349,7 +349,9 @@ def select_custom_period(page, company: str, max_wait_ms: int = 8000) -> bool:
     """기간 프리셋(1개월/3개월/6개월/1년) 대신 '직접입력' 모드로 전환한다.
     이 라디오/버튼을 누르지 않으면 조회기간 입력칸에 값을 채워 넣어도 무시되고,
     현재 선택된 프리셋 기간(예: 3개월)으로 그대로 조회된다.
-    화면이 완전히 준비되기 전에 클릭을 시도하면 실패할 수 있어, 몇 초간 반복 재시도한다."""
+    화면이 완전히 준비되기 전에 클릭을 시도하면 실패할 수 있어, 몇 초간 반복 재시도한다.
+    ':text-is'(완전 일치)는 앞뒤 공백/줄바꿈이나 라디오와 묶인 구조 때문에 못 찾는 경우가
+    많아, 부분 일치(get_by_text)로 찾고 안 되면 근처 라디오 input을 직접 체크한다."""
     start_time = datetime.now()
     while True:
         elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
@@ -359,16 +361,31 @@ def select_custom_period(page, company: str, max_wait_ms: int = 8000) -> bool:
 
         for frame in page.frames:
             try:
-                candidates = frame.locator(":text-is('직접입력')").all()
+                candidates = frame.get_by_text("직접입력").all()
             except Exception:
-                continue
+                candidates = []
+
             for el in candidates:
                 try:
-                    if not el.is_visible():
-                        continue
-                    el.click(timeout=1500)
+                    if el.is_visible():
+                        el.click(timeout=1500)
+                        page.wait_for_timeout(400)
+                        print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
+                        return True
+                except Exception:
+                    pass
+
+                # 텍스트 자체가 클릭이 안 먹히면(label 밖에 있거나 겹쳐 있는 경우),
+                # 가장 가까운 라디오 input을 직접 체크 시도
+                try:
+                    radio = el.locator(
+                        "xpath=ancestor-or-self::*[1]//input[@type='radio'] | "
+                        "preceding::input[@type='radio'][1] | "
+                        "following::input[@type='radio'][1]"
+                    ).first
+                    radio.check(timeout=1500, force=True)
                     page.wait_for_timeout(400)
-                    print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
+                    print(f"[{company}] ✓ '직접입력' 기간 모드로 전환 (라디오 직접 체크)")
                     return True
                 except Exception:
                     continue
@@ -505,8 +522,8 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     print(f"[{company}] 3단계: 조회기간 입력 중... ({from_date} ~ {to_date})")
 
     filled_dates = False
-    for attempt in range(2):  # '직접입력' 클릭이 씹혀서 값이 되돌아가는 경우 한 번 더 재시도
-        select_custom_period(page, company)
+    for attempt in range(3):  # '직접입력' 클릭이 안 먹히거나 값이 되돌아가는 경우 재시도
+        period_selected = select_custom_period(page, company)
         page.wait_for_timeout(500)
 
         date_els = None
@@ -525,12 +542,12 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 if re.match(r"^\d{8}$", val or ""):
                     matches.append(el)
 
-            if len(matches) >= 2:
+        if len(matches) >= 2:
                 date_els = matches
                 break
 
         if date_els is None:
-            print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (시도 {attempt + 1}/2)")
+            print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (시도 {attempt + 1}/3)")
             continue
 
         date_els[0].fill(from_date)
@@ -541,13 +558,14 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         # 되돌리면 값이 원래대로 리셋되거나 입력칸이 readonly라 fill이 씹힐 수 있음)
         actual_from = date_els[0].input_value()
         actual_to = date_els[1].input_value()
-        if actual_from == from_date and actual_to == to_date:
+        if period_selected and actual_from == from_date and actual_to == to_date:
             filled_dates = True
             print(f"[{company}] ✓ 조회기간 입력 완료 및 값 확인됨")
             break
         else:
             print(f"[{company}] ⚠ 조회기간 값이 유지되지 않음 "
-                  f"(기대: {from_date}~{to_date}, 실제: {actual_from}~{actual_to}) - 재시도 (시도 {attempt + 1}/2)")
+                  f"(직접입력 전환: {period_selected}, 기대: {from_date}~{to_date}, "
+                  f"실제: {actual_from}~{actual_to}) - 재시도 (시도 {attempt + 1}/3)")
 
     if not filled_dates:
         print(f"[{company}] ⚠ 조회기간 입력에 실패했습니다 (기본 프리셋 기간으로 조회될 수 있음)")
