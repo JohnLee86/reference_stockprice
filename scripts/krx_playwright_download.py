@@ -364,6 +364,15 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     print(f"[{company}] ({ticker}) 처리 시작")
     print(f"{'='*70}")
 
+    if debug:
+        def _log_request(request):
+            if "getJsonData.cmd" in request.url and request.method == "POST":
+                try:
+                    print(f"[{company}] 🌐 실제 전송된 요청 파라미터: {request.post_data}")
+                except Exception as e:
+                    print(f"[{company}] 요청 로깅 실패: {e}")
+        page.on("request", _log_request)
+          
     try:
         print(f"[{company}] 1단계: 종목 선택 페이지로 이동...")
         page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
