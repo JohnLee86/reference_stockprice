@@ -258,33 +258,33 @@ def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dic
 def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000) -> bool:
     """
     검색 결과에서 종목코드 찾아 클릭 (개선된 3가지 방법)
-    
+
     방법 1: 정확한 텍스트 매칭 (text= selector)
     방법 2: 셀 텍스트 포함 검색
     방법 3: 행(row) 전체 텍스트 검색
-    
+
     Args:
         page: Playwright page 객체
         ticker: 종목코드 (예: "005930")
         company: 회사명 (로그 출력용)
         max_wait_ms: 최대 대기 시간 (밀리초)
-    
+
     Returns:
         성공 시 True, 실패 시 False
     """
     print(f"[{company}] 검색 결과 대기 중 ({ticker})...")
-    
+
     start_time = datetime.now()
     attempt_count = 0
-    
+
     while True:
         elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
         if elapsed_ms > max_wait_ms:
             print(f"[{company}] ✗ 검색 결과 타임아웃 ({max_wait_ms}ms 초과)")
             return False
-        
+
         attempt_count += 1
-        
+
         # 모든 frame에서 종목코드 검색
         for frame in page.frames:
             try:
@@ -301,7 +301,7 @@ def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000
                                 continue
                 except Exception:
                     pass
-                
+
                 # ========== 방법 2: 모든 td 셀 텍스트 검색 ==========
                 try:
                     td_elements = frame.locator("td").all()
@@ -317,7 +317,7 @@ def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000
                                 continue
                 except Exception:
                     pass
-                
+
                 # ========== 방법 3: tr(행) 전체 텍스트 검색 ==========
                 try:
                     rows = frame.locator("tr").all()
@@ -333,66 +333,32 @@ def find_search_result(page, ticker: str, company: str, max_wait_ms: int = 12000
                                 continue
                 except Exception:
                     pass
-            
+
             except Exception:
                 continue
-        
+
         # 500ms 대기 후 재시도
         page.wait_for_timeout(500)
-        
+
         # 10회 시도마다 진행 상황 로그
         if attempt_count % 10 == 0:
             print(f"[{company}] 계속 대기 중... ({int(elapsed_ms)}ms / {max_wait_ms}ms)")
 
 
-def select_custom_period(page, company: str, max_wait_ms: int = 8000) -> bool:
-    """기간 프리셋(1개월/3개월/6개월/1년) 대신 '직접입력' 모드로 전환한다.
-    이 라디오/버튼을 누르지 않으면 조회기간 입력칸에 값을 채워 넣어도 무시되고,
-    현재 선택된 프리셋 기간(예: 3개월)으로 그대로 조회된다.
-    화면이 완전히 준비되기 전에 클릭을 시도하면 실패할 수 있어, 몇 초간 반복 재시도한다.
-    ':text-is'(완전 일치)는 앞뒤 공백/줄바꿈이나 라디오와 묶인 구조 때문에 못 찾는 경우가
-    많아, 부분 일치(get_by_text)로 찾고 안 되면 근처 라디오 input을 직접 체크한다."""
-    start_time = datetime.now()
-    while True:
-        elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
-        if elapsed_ms > max_wait_ms:
-            print(f"[{company}] ⚠ '직접입력' 버튼/라디오를 찾지 못했습니다 ({max_wait_ms}ms 초과, 프리셋 기간으로 조회될 수 있음)")
-            return False
+def save_debug_snapshot(page, company: str, tag: str):
+    """디버깅용: 현재 화면 스크린샷 + 각 프레임의 HTML을 data/debug/에 저장한다."""
+    debug_dir = Path("data/debug")
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^0-9A-Za-z가-힣_-]", "_", f"{company}_{tag}")
+    try:
+        page.screenshot(path=str(debug_dir / f"{safe}.png"), full_page=True)
+        print(f"[{company}] 📸 디버그 스크린샷 저장: data/debug/{safe}.png")
+    except Exception as e:
+        print(f"[{company}] 스크린샷 저장 실패: {e}")
 
-        for frame in page.frames:
-            try:
-                candidates = frame.get_by_text("직접입력").all()
-            except Exception:
-                candidates = []
 
-            for el in candidates:
-                try:
-                    if el.is_visible():
-                        el.click(timeout=1500)
-                        page.wait_for_timeout(400)
-                        print(f"[{company}] ✓ '직접입력' 기간 모드로 전환")
-                        return True
-                except Exception:
-                    pass
-
-                # 텍스트 자체가 클릭이 안 먹히면(label 밖에 있거나 겹쳐 있는 경우),
-                # 가장 가까운 라디오 input을 직접 체크 시도
-                try:
-                    radio = el.locator(
-                        "xpath=ancestor-or-self::*[1]//input[@type='radio'] | "
-                        "preceding::input[@type='radio'][1] | "
-                        "following::input[@type='radio'][1]"
-                    ).first
-                    radio.check(timeout=1500, force=True)
-                    page.wait_for_timeout(400)
-                    print(f"[{company}] ✓ '직접입력' 기간 모드로 전환 (라디오 직접 체크)")
-                    return True
-                except Exception:
-                    continue
-
-        page.wait_for_timeout(400)
-
-def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path) -> bool:
+def process_company(page, company: str, ticker: str, from_date: str, to_date: str, output_path: Path,
+                     debug: bool = False) -> bool:
     """각 회사의 데이터를 조회하고 저장"""
     print(f"\n{'='*70}")
     print(f"[{company}] ({ticker}) 처리 시작")
@@ -408,7 +374,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     # ========== 1단계: 상단 통합검색에서 회사명 검색 ==========
     print(f"[{company}] 회사명 검색 중: {company}")
-    
+
     search_box = None
     for frame in page.frames:
         try:
@@ -418,7 +384,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if search_box is None:
         print(f"[{company}] ✗ 상단 통합검색창을 찾지 못했습니다.")
         return False
@@ -438,7 +404,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if not clicked_search:
         print(f"[{company}] Enter 키로 검색...")
         search_box.press("Enter")
@@ -461,16 +427,16 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if not ticker_confirmed:
         print(f"[{company}] ✗ 종목 선택 화면에서 {ticker} 확인 실패")
         return False
-    
+
     print(f"[{company}] ✓ 종목 선택 완료")
 
     # ========== 2단계: 화면번호로 [12003] 이동 ==========
     print(f"[{company}] 2단계: 개별종목 시세추이 화면(12003) 이동 중...")
-    
+
     screen_search = None
     for frame in page.frames:
         try:
@@ -480,7 +446,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if screen_search is None:
         print(f"[{company}] ✗ 화면번호 검색창을 찾지 못했습니다.")
         return False
@@ -499,10 +465,10 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if not clicked_search_link:
         screen_search.press("Enter")
-    
+
     page.wait_for_timeout(1500)
 
     # 개별종목 시세추이 메뉴 클릭
@@ -514,64 +480,55 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     page.wait_for_timeout(2000)
     print(f"[{company}] ✓ 화면 전환 완료")
+
+    if debug:
+        save_debug_snapshot(page, company, "01_화면전환직후")
 
     # ========== 3단계: 조회기간 입력 ==========
     print(f"[{company}] 3단계: 조회기간 입력 중... ({from_date} ~ {to_date})")
 
     filled_dates = False
-    for attempt in range(3):  # '직접입력' 클릭이 안 먹히거나 값이 되돌아가는 경우 재시도
-        period_selected = select_custom_period(page, company)
-        page.wait_for_timeout(500)
-
-        date_els = None
+    for attempt in range(3):
+        start_input = end_input = None
         for frame in page.frames:
             try:
-                date_inputs = frame.locator("input[type='text']").all()
+                candidate = frame.locator("#strtDd")
+                if candidate.count() > 0:
+                    start_input = candidate.first
+                    end_input = frame.locator("#endDd").first
+                    break
             except Exception:
                 continue
 
-            matches = []
-            for el in date_inputs:
-                try:
-                    val = el.input_value()
-                except Exception:
-                    continue
-                if re.match(r"^\d{8}$", val or ""):
-                    matches.append(el)
-
-        if len(matches) >= 2:
-                date_els = matches
-                break
-
-        if date_els is None:
-            print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (시도 {attempt + 1}/3)")
+        if start_input is None:
+            print(f"[{company}] ⚠ 조회기간 입력창(#strtDd/#endDd)을 찾지 못했습니다 (시도 {attempt + 1}/3)")
+            page.wait_for_timeout(500)
             continue
 
-        date_els[0].fill(from_date)
-        date_els[1].fill(to_date)
+        start_input.fill(from_date)
+        end_input.fill(to_date)
         page.wait_for_timeout(300)
 
-        # '직접입력'이 실제로 먹혔는지: 값이 그대로 유지되는지 재확인 (사이트가 프리셋으로
-        # 되돌리면 값이 원래대로 리셋되거나 입력칸이 readonly라 fill이 씹힐 수 있음)
-        actual_from = date_els[0].input_value()
-        actual_to = date_els[1].input_value()
-        if period_selected and actual_from == from_date and actual_to == to_date:
+        actual_from = start_input.input_value()
+        actual_to = end_input.input_value()
+        if actual_from == from_date and actual_to == to_date:
             filled_dates = True
             print(f"[{company}] ✓ 조회기간 입력 완료 및 값 확인됨")
             break
         else:
             print(f"[{company}] ⚠ 조회기간 값이 유지되지 않음 "
-                  f"(직접입력 전환: {period_selected}, 기대: {from_date}~{to_date}, "
-                  f"실제: {actual_from}~{actual_to}) - 재시도 (시도 {attempt + 1}/3)")
+                  f"(기대: {from_date}~{to_date}, 실제: {actual_from}~{actual_to}) - 재시도 (시도 {attempt + 1}/3)")
 
     if not filled_dates:
         print(f"[{company}] ⚠ 조회기간 입력에 실패했습니다 (기본 프리셋 기간으로 조회될 수 있음)")
+        if debug:
+            save_debug_snapshot(page, company, "02_기간입력실패")
 
     page.wait_for_timeout(800)
-      
+
     # ========== 조회 버튼 클릭 ==========
     clicked_search_btn = False
     for frame in page.frames:
@@ -583,7 +540,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 break
         except Exception:
             continue
-    
+
     if not clicked_search_btn:
         for frame in page.frames:
             try:
@@ -595,7 +552,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                     break
             except Exception:
                 continue
-    
+
     if not clicked_search_btn:
         print(f"[{company}] ✗ 조회 버튼을 찾지 못했습니다.")
         return False
@@ -616,7 +573,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 continue
         if ticker_confirmed2:
             break
-    
+
     if not ticker_confirmed2:
         print(f"[{company}] ⚠ 데이터 화면 로드 확인 실패 (계속 진행)")
 
@@ -625,7 +582,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     scroll_to_load_all_rows(page, company)
 
     print(f"[{company}] 데이터 추출 중...")
-    
+
     from_dt = datetime.strptime(from_date, "%Y%m%d")
     to_dt = datetime.strptime(to_date, "%Y%m%d")
     rows = extract_regular_volume_rows(page, from_dt, to_dt)
@@ -686,13 +643,14 @@ def main():
         overall_ok = True
         success_count = 0
         fail_count = 0
-        
+
         for i, entry in enumerate(manifest, 1):
             print(f"\n[진행률] {i}/{len(manifest)}")
             output_path = Path(entry["output"])
             ok = process_company(
                 page, entry["company"], entry["ticker"],
                 entry["from_date"], entry["to_date"], output_path,
+                debug=(i == 1),
             )
             if ok:
                 success_count += 1
