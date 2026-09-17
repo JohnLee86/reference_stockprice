@@ -492,19 +492,28 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     filled_dates = False
     for attempt in range(3):
-        start_input = end_input = None
+        date_els = None
         for frame in page.frames:
             try:
-                candidate = frame.locator("#strtDd")
-                if candidate.count() > 0:
-                    start_input = candidate.first
-                    end_input = frame.locator("#endDd").first
-                    break
+                date_inputs = frame.locator("input[type='text']").all()
             except Exception:
                 continue
 
-        if start_input is None:
-            print(f"[{company}] ⚠ 조회기간 입력창(#strtDd/#endDd)을 찾지 못했습니다 (시도 {attempt + 1}/3)")
+            matches = []
+            for el in date_inputs:
+                try:
+                    val = el.input_value()
+                except Exception:
+                    continue
+                if re.match(r"^\d{8}$", val or ""):
+                    matches.append(el)
+
+            if len(matches) >= 2:
+                date_els = matches
+                break
+
+        if date_els is None:
+            print(f"[{company}] ⚠ 조회기간 입력창을 찾지 못했습니다 (시도 {attempt + 1}/3)")
             if debug:
                 for fi, frame in enumerate(page.frames):
                     try:
@@ -518,15 +527,24 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             page.wait_for_timeout(500)
             continue
 
-        start_input.fill(from_date)
-        end_input.fill(to_date)
+        start_input, end_input = date_els[0], date_els[1]
+
+        # .fill()은 값만 강제로 바꿀 뿐 keyup 이벤트를 안 보내서, 이 값에 의존하는
+        # 사이트 내부 로직이 반응 안 할 수 있다 (예전 종목명 자동완성 문제와 동일한 패턴).
+        # 실제 키 입력을 흉내내는 press_sequentially로 한 글자씩 입력한다.
+        for el, val in ((start_input, from_date), (end_input, to_date)):
+            el.click()
+            el.press("Control+A")
+            el.press("Delete")
+            el.press_sequentially(val, delay=60)
+            el.press("Tab")  # blur를 발생시켜 사이트 쪽 값 검증/등록을 유도
         page.wait_for_timeout(300)
 
         actual_from = start_input.input_value()
         actual_to = end_input.input_value()
         if actual_from == from_date and actual_to == to_date:
             filled_dates = True
-            print(f"[{company}] ✓ 조회기간 입력 완료 및 값 확인됨")
+            print(f"[{company}] ✓ 조회기간 입력 완료 및 값 확인됨 (키 입력 방식)")
             break
         else:
             print(f"[{company}] ⚠ 조회기간 값이 유지되지 않음 "
