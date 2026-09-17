@@ -148,27 +148,38 @@ def find_data_table(page):
     return best_table, best_count
 
 
-def scroll_to_load_all_rows(page, company: str, max_iterations: int = 60) -> None:
+def scroll_to_load_all_rows(page, company: str, expected_count: int | None = None, max_iterations: int = 150) -> None:
     """KRX [12003] 표는 가상 스크롤(virtual scroll) 그리드라서, 화면에 렌더링된 행만
-    DOM에 존재한다. 표의 마지막 행을 반복해서 스크롤에 노출시켜 전체 기간 데이터가
-    다 렌더링될 때까지(행 개수가 더 늘지 않을 때까지) 진행한다."""
+    DOM에 존재한다. scroll_into_view_if_needed는 이 그리드의 lazy-load를 못 건드리는
+    것으로 확인되어, 실제 마우스 휠 스크롤을 흉내내는 page.mouse.wheel로 반복 스크롤한다.
+    expected_count(서버 응답의 실제 건수)를 알면 그 값에 도달할 때까지, 모르면 행 개수가
+    더 늘지 않을 때까지 진행한다."""
     table, prev_count = find_data_table(page)
     if table is None:
         print(f"[{company}] ⚠ 스크롤 대상 표를 찾지 못했습니다 (건너뜀)")
         return
 
+    try:
+        box = table.bounding_box()
+        if box:
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    except Exception:
+        pass
+
     stable_rounds = 0
     for i in range(max_iterations):
         try:
-            rows = table.locator("tr").all()
-            if rows:
-                rows[-1].scroll_into_view_if_needed(timeout=2000)
+            page.mouse.wheel(0, 1500)
         except Exception:
             pass
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(200)
 
         table, count = find_data_table(page)
         if table is None:
+            break
+
+        if expected_count and count >= expected_count:
+            prev_count = count
             break
 
         if count <= prev_count:
@@ -177,11 +188,12 @@ def scroll_to_load_all_rows(page, company: str, max_iterations: int = 60) -> Non
             stable_rounds = 0
         prev_count = count
 
-        # 3번 연속 행 개수가 늘지 않으면 전체 렌더링이 끝난 것으로 간주
-        if stable_rounds >= 3:
+        # expected_count를 모를 때만: 5번 연속 행 개수가 안 늘면 종료
+        if not expected_count and stable_rounds >= 5:
             break
 
-    print(f"[{company}] 스크롤 완료 - 렌더링된 행 수: {prev_count}")
+    print(f"[{company}] 스크롤 완료 - 렌더링된 행 수: {prev_count}"
+          + (f" / 목표: {expected_count}" if expected_count else ""))
 
 
 def extract_regular_volume_rows(page, from_dt: datetime, to_dt: datetime) -> dict:
@@ -614,7 +626,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     # 서버 응답(JSON)이 도착할 때까지 대기 -> 그 응답의 실제 건수만큼 표(DOM)에
     # 반영될 때까지 대기. 응답 건수를 확인 못하면 예전처럼 고정 시간만 대기(안전망).
     expected_count = None
-    for _ in range(20):
+    for _ in range(40):
         page.wait_for_timeout(500)
         if response_holder.get("counts"):
             expected_count = max(response_holder["counts"].values())
@@ -638,7 +650,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     # ========== 데이터 추출 ==========
     print(f"[{company}] 표 전체 렌더링 확인을 위해 한 번 더 스크롤 중 (안전망)...")
-    scroll_to_load_all_rows(page, company)
+    scroll_to_load_all_rows(page, company, expected_count)
 
     print(f"[{company}] 데이터 추출 중...")
 
