@@ -135,18 +135,15 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
     ax.figure.canvas.draw()
 
     # 지정된 두 경계 위치에 이중선을 실제 셀 좌표 기준으로 그린다
-    for data_idx in bold_after:  # 이 데이터 행(0-base) '아래'에 이중선
+    for data_idx in bold_after:  # 이 데이터 행(0-base) '아래'를 굵은 선으로 구분
         table_row = data_idx + 1  # 헤더가 0행이므로 데이터 행은 +1
         try:
             cell = tbl[(table_row, 0)]
         except KeyError:
             continue
         y = cell.get_y()  # 이 행의 아래쪽 경계 = 다음 행과의 경계선
-        row_h = cell.get_height()
-        gap = row_h * 0.12
-        for offset in (gap, -gap):
-            ax.plot([0, 1], [y + offset, y + offset], transform=ax.transAxes,
-                    color="#666666", linewidth=0.7, solid_capstyle="butt", clip_on=False)
+        ax.plot([0, 1], [y, y], transform=ax.transAxes,
+                color="#222222", linewidth=1.8, solid_capstyle="butt", clip_on=False)
 
     # 마지막 행 '상승률' 값 위에 파란 동그라미 표시
     try:
@@ -169,7 +166,7 @@ def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASE
 
     ax.set_title(
         f"일별 종가 추이({plot_df['날짜'].iloc[0].strftime('%Y-%m-%d')} ~ {plot_df['날짜'].iloc[-1].strftime('%Y-%m-%d')})",
-        fontsize=10,
+        fontsize=10, pad=2,
     )
     ax.plot(plot_df["날짜"], plot_df["종가"], color="#2E6E9E", linewidth=1.2)
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, color="#cccccc")
@@ -185,18 +182,30 @@ def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASE
     max_idx = plot_df["종가"].idxmax()
     min_idx = plot_df["종가"].idxmin()
     last_idx = plot_df.index[-1]
+    n_points = len(plot_df)
 
     def _annotate(idx, color, prefix):
         row = plot_df.loc[idx]
         d = row["날짜"]
         ax.scatter([d], [row["종가"]], color=color, zorder=5, s=28)
+
+        # 시작/끝 지점 근처에서는 라벨이 y축이나 그래프 밖으로 넘어가지 않도록
+        # 가운데 정렬 대신 안쪽 방향으로 정렬을 바꾼다.
+        rel_pos = idx / max(n_points - 1, 1)
+        if rel_pos < 0.05:
+            xytext, ha = (12, 10), "left"
+        elif rel_pos > 0.95:
+            xytext, ha = (-12, 10), "right"
+        else:
+            xytext, ha = (0, 10), "center"
+
         ax.annotate(
             f"{prefix} {int(row['종가']):,}원({d.strftime('%Y.%m.%d')}일)",
             (d, row["종가"]),
             textcoords="offset points",
-            xytext=(0, 10),
+            xytext=xytext,
             fontsize=7.5,
-            ha="center",
+            ha=ha,
             color=color,
         )
 
@@ -221,7 +230,7 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     title_units = 3
     chart_units = max(16, 34 - table_units)  # 표가 커져도 그래프 영역이 너무 작아지지 않게 최소값 보장
     gs = fig.add_gridspec(nrows=3, ncols=1, height_ratios=[title_units, table_units, chart_units],
-                           top=0.96, bottom=0.05, left=0.08, right=0.94, hspace=0.12)
+                           top=0.96, bottom=0.05, left=0.08, right=0.94, hspace=0.05)
 
     ax_title = fig.add_subplot(gs[0])
     ax_title.axis("off")
@@ -236,6 +245,11 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     chart_ok = build_chart(full_df, ax_chart, baseline_date)
     if not chart_ok:
         ax_chart.axis("off")
+
+    # 그래프의 좌우 폭을 표와 정확히 동일하게 맞춘다 (안전장치)
+    table_pos = ax_table.get_position()
+    chart_pos = ax_chart.get_position()
+    ax_chart.set_position([table_pos.x0, chart_pos.y0, table_pos.width, chart_pos.height])
 
 
 def build_pdf(company: str, calc_date: pd.Timestamp, table_df: pd.DataFrame,
