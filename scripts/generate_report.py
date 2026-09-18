@@ -142,7 +142,7 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
         except KeyError:
             continue
         y = cell.get_y()  # 이 행의 아래쪽 경계 = 다음 행과의 경계선
-        ax.plot([-0.002, 1.002], [y, y], transform=ax.transAxes,
+        ax.plot([-0.01, 1.01], [y, y], transform=ax.transAxes,
                 color="#222222", linewidth=1.8, solid_capstyle="butt", clip_on=False, zorder=10)
 
     # 마지막 행 '상승률' 값 위에 파란 동그라미 표시
@@ -158,15 +158,16 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
 
     return tbl
     
-def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE) -> bool:
-    """전달받은 Axes 위에 종가 추이 그래프를 그린다 (기준일부터, 최고/최저/마지막 강조)."""
+def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE):
+    """전달받은 Axes 위에 종가 추이 그래프를 그린다 (기준일부터, 최고/최저/마지막 강조).
+    제목은 이 축 위에 직접 그리지 않고 문자열로 반환한다 (표-그래프 사이 여백에 별도 배치하기 위함)."""
     plot_df = df[df["날짜"] >= baseline_date].dropna(subset=["종가"]).reset_index(drop=True)
     if plot_df.empty:
-        return False
+        return False, None
 
-    ax.set_title(
-        f"일별 종가 추이({plot_df['날짜'].iloc[0].strftime('%Y-%m-%d')} ~ {plot_df['날짜'].iloc[-1].strftime('%Y-%m-%d')})",
-        fontsize=10, pad=2,
+    title_text = (
+        f"일별 종가 추이({plot_df['날짜'].iloc[0].strftime('%Y-%m-%d')} ~ "
+        f"{plot_df['날짜'].iloc[-1].strftime('%Y-%m-%d')})"
     )
     ax.plot(plot_df["날짜"], plot_df["종가"], color="#2E6E9E", linewidth=1.2)
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, color="#cccccc")
@@ -224,7 +225,7 @@ def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASE
     ax.set_ylabel("종가(원)", fontsize=8)
     ax.tick_params(axis="y", labelsize=8)
     ax.yaxis.set_major_formatter(lambda v, _pos: f"{int(v):,}")
-    return True
+    return True, title_text
 
 
 def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.DataFrame,
@@ -236,7 +237,7 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     title_units = 3
     chart_units = max(16, 34 - table_units)  # 표가 커져도 그래프 영역이 너무 작아지지 않게 최소값 보장
     gs = fig.add_gridspec(nrows=3, ncols=1, height_ratios=[title_units, table_units, chart_units],
-                           top=0.96, bottom=0.05, left=0.08, right=0.94, hspace=0.05)
+                           top=0.96, bottom=0.05, left=0.08, right=0.94, hspace=0.09)
 
     ax_title = fig.add_subplot(gs[0])
     ax_title.axis("off")
@@ -248,7 +249,7 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     draw_table(ax_table, table_df, bold_after)
 
     ax_chart = fig.add_subplot(gs[2])
-    chart_ok = build_chart(full_df, ax_chart, baseline_date)
+    chart_ok, chart_title = build_chart(full_df, ax_chart, baseline_date)
     if not chart_ok:
         ax_chart.axis("off")
 
@@ -265,7 +266,17 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
         left_overhang = chart_pos.x0 - yaxis_bbox_fig.x0  # 라벨이 축 상자보다 왼쪽으로 튀어나온 양
         new_x0 = table_pos.x0 + max(left_overhang, 0)
         new_right = table_pos.x0 + table_pos.width  # 오른쪽 끝은 표와 동일하게 유지
-        ax_chart.set_position([new_x0, chart_pos.y0, new_right - new_x0, chart_pos.height])
+        ax_chart.set_position([new_x0, ax_chart.get_position().y0, new_right - new_x0,
+                                ax_chart.get_position().height])
+
+        # 표 하단과 그래프 상단 사이 여백의 3/4 지점(그래프에 더 가까운 쪽)에
+        # 그래프 제목을 굵게 배치한다.
+        table_bottom = table_pos.y0
+        chart_top = ax_chart.get_position().y1
+        title_y = table_bottom - (table_bottom - chart_top) * 0.75
+        title_x = table_pos.x0 + table_pos.width / 2
+        fig.text(title_x, title_y, chart_title, ha="center", va="center",
+                  fontsize=10, fontweight="bold")
     else:
         table_pos = ax_table.get_position()
         chart_pos = ax_chart.get_position()
