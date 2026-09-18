@@ -20,6 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 import pandas as pd
 
 # 한글 폰트 등록 (GitHub Actions 러너에는 한글 폰트가 기본 설치되어 있지 않으므로,
@@ -122,6 +123,14 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
             cell.set_text_props(fontweight="bold")
             cell.set_facecolor("#E9EEF5")
 
+    # '상승률' 컬럼(마지막 컬럼)의 숫자는 전부 밝은 파란색으로 표시
+    pct_col = n_cols - 1
+    for r in range(1, n_rows + 1):
+        try:
+            tbl[(r, pct_col)].set_text_props(color="#0000FF")
+        except KeyError:
+            pass
+
     # 마지막(최신) 행은 굵게 표시
     last_row_idx = n_rows  # 헤더가 0행이므로 데이터 마지막 행은 n_rows
     for c in range(n_cols):
@@ -145,16 +154,26 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
         ax.plot([-0.01, 1.01], [y, y], transform=ax.transAxes,
                 color="#222222", linewidth=1.8, solid_capstyle="butt", clip_on=False, zorder=10)
 
-    # 마지막 행 '상승률' 값 위에 파란 동그라미 표시
-    try:
-        last_pct_cell = tbl[(last_row_idx, n_cols - 1)]
-        cx = last_pct_cell.get_x() + last_pct_cell.get_width() / 2
-        cy = last_pct_cell.get_y() + last_pct_cell.get_height()  # 셀 상단
-        ax.scatter([cx], [cy], transform=ax.transAxes, s=40, marker="o",
-                   facecolor="none", edgecolor="#1F5FBF", linewidth=1.6,
-                   zorder=6, clip_on=False)
-    except KeyError:
-        pass
+    def _circle_cell(row, col, color="#0000FF"):
+        """지정한 셀의 값을 감싸는 타원(테두리만)을 그린다."""
+        try:
+            cell = tbl[(row, col)]
+        except KeyError:
+            return
+        cx = cell.get_x() + cell.get_width() / 2
+        cy = cell.get_y() + cell.get_height() / 2
+        ellipse = Ellipse(
+            (cx, cy), width=cell.get_width() * 0.82, height=cell.get_height() * 1.9,
+            transform=ax.transAxes, facecolor="none", edgecolor=color,
+            linewidth=1.6, zorder=6, clip_on=False,
+        )
+        ax.add_patch(ellipse)
+
+    # 마지막(최신) 행의 '상승률' 값에 타원 표시
+    _circle_cell(last_row_idx, pct_col)
+    # 기준일(맨 첫 데이터 행)의 '기준 주가' 값에도 동일하게 타원 표시
+    baseline_col = HEADERS.index("기준 주가")
+    _circle_cell(1, baseline_col)
 
     return tbl
     
