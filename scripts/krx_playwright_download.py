@@ -677,9 +677,28 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     raw_path = output_path.parent / f"{company}_KRX원본다운로드.csv"
     downloaded = False
-    for attempt in range(2):  # 일시적 지연으로 실패하는 경우가 있어 한 번 재시도
+    for attempt in range(3):  # 일시적 지연으로 실패하는 경우가 있어 재시도 횟수를 늘림
         try:
-            with page.expect_download(timeout=25000) as download_info:
+            with page.expect_download(timeout=35000) as download_info:
+                # 재시도 시에는 팝업이 이미 닫혔을 수 있으니 다운로드 버튼부터 다시 클릭
+                if attempt > 0:
+                    for frame in page.frames:
+                        try:
+                            btn = frame.locator("button.CI-MDI-UNIT-DOWNLOAD:visible")
+                            if btn.count() > 0:
+                                btn.first.click(timeout=5000)
+                                break
+                        except Exception:
+                            continue
+                    page.wait_for_timeout(500)
+                    for frame in page.frames:
+                        try:
+                            link = frame.locator("div[data-type='csv'] a:visible")
+                            if link.count() > 0:
+                                csv_link = link.first
+                                break
+                        except Exception:
+                            continue
                 csv_link.click()
             download = download_info.value
             raw_path.parent.mkdir(parents=True, exist_ok=True)
@@ -687,8 +706,8 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
             downloaded = True
             break
         except Exception as e:
-            print(f"[{company}] ⚠ CSV 다운로드 시도 {attempt + 1}/2 실패: {e}")
-            page.wait_for_timeout(1000)
+            print(f"[{company}] ⚠ CSV 다운로드 시도 {attempt + 1}/3 실패: {e}")
+            page.wait_for_timeout(1500)
 
     if not downloaded:
         print(f"[{company}] ✗ CSV 다운로드 최종 실패")
