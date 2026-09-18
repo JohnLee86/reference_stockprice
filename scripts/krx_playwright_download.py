@@ -676,14 +676,22 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         return False
 
     raw_path = output_path.parent / f"{company}_KRX원본다운로드.csv"
-    try:
-        with page.expect_download(timeout=15000) as download_info:
-            csv_link.click()
-        download = download_info.value
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        download.save_as(str(raw_path))
-    except Exception as e:
-        print(f"[{company}] ✗ CSV 다운로드 실패: {e}")
+    downloaded = False
+    for attempt in range(2):  # 일시적 지연으로 실패하는 경우가 있어 한 번 재시도
+        try:
+            with page.expect_download(timeout=25000) as download_info:
+                csv_link.click()
+            download = download_info.value
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            download.save_as(str(raw_path))
+            downloaded = True
+            break
+        except Exception as e:
+            print(f"[{company}] ⚠ CSV 다운로드 시도 {attempt + 1}/2 실패: {e}")
+            page.wait_for_timeout(1000)
+
+    if not downloaded:
+        print(f"[{company}] ✗ CSV 다운로드 최종 실패")
         return False
 
     # ========== 다운로드된 CSV에서 날짜/종가/정규시장 거래량만 추출해 저장 ==========
