@@ -630,7 +630,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     download_btn = None
     for frame in page.frames:
         try:
-            candidate = frame.locator("button.CI-MDI-UNIT-DOWNLOAD")
+            candidate = frame.locator("button.CI-MDI-UNIT-DOWNLOAD:visible")
             if candidate.count() > 0:
                 download_btn = candidate.first
                 break
@@ -662,7 +662,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
     csv_link = None
     for frame in page.frames:
         try:
-            candidate = frame.locator("div[data-type='csv'] a")
+            candidate = frame.locator("div[data-type='csv'] a:visible")
             if candidate.count() > 0:
                 csv_link = candidate.first
                 break
