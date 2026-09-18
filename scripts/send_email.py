@@ -47,9 +47,12 @@ def main():
         print(f"오류: 첨부 파일이 없습니다 - {args.attachment}", file=sys.stderr)
         sys.exit(1)
 
+    # RECIPIENT_EMAIL은 "a@x.com,b@y.com" 처럼 쉼표로 여러 명을 넣을 수 있다
+    recipients = [addr.strip() for addr in recipient.split(",") if addr.strip()]
+
     msg = MIMEMultipart()
     msg["From"] = sender
-    msg["To"] = recipient
+    msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"[{args.company}] 일별 기준주가 보고서"
     msg.attach(MIMEText(f"{args.company} 일별 기준주가 보고서를 첨부합니다. (자동 발송)", "plain"))
 
@@ -61,7 +64,7 @@ def main():
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
             server.login(sender, app_password)
-            server.sendmail(sender, [recipient], msg.as_string())
+            server.sendmail(sender, recipients, msg.as_string())
     except smtplib.SMTPAuthenticationError:
         print(
             "오류: Gmail 로그인 실패. 일반 비밀번호가 아닌 '앱 비밀번호'를 쓰고 있는지, "
@@ -73,7 +76,7 @@ def main():
         print(f"오류: 이메일 발송 실패 - {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"이메일 발송 완료: {sender} -> {recipient}")
+    print(f"이메일 발송 완료: {sender} -> {', '.join(recipients)}")
 
 
 if __name__ == "__main__":
