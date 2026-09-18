@@ -641,7 +641,22 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
         print(f"[{company}] ✗ 다운로드 버튼(.CI-MDI-UNIT-DOWNLOAD)을 찾지 못했습니다.")
         return False
 
-    download_btn.click()
+    try:
+        download_btn.scroll_into_view_if_needed(timeout=5000)
+    except Exception:
+        pass
+
+    if debug:
+        save_debug_snapshot(page, company, "03_다운로드버튼클릭직전")
+
+    try:
+        download_btn.click(timeout=5000)
+    except Exception as e:
+        print(f"[{company}] ✗ 다운로드 버튼 클릭 실패: {e}")
+        if debug:
+            save_debug_snapshot(page, company, "04_다운로드버튼클릭실패")
+        return False
+
     page.wait_for_timeout(500)
 
     csv_link = None
