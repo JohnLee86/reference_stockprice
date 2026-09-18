@@ -116,6 +116,7 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
     tbl.scale(1.02, 1.0)  # y는 1.0 유지 - 행이 많아도 표 영역(axes) 밖으로 넘치지 않게 함
 
     # 기본은 전부 얇은 한 줄 테두리 (헤더 포함, 특별 취급 없음)
+    # 기본은 전부 얇은 한 줄 테두리 (헤더 포함, 특별 취급 없음)
     for (r, _c), cell in tbl.get_celld().items():
         cell.set_edgecolor("#999999")
         cell.set_linewidth(0.6)
@@ -169,11 +170,10 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
         )
         ax.add_patch(ellipse)
 
-    # 마지막(최신) 행의 '상승률' 값에 타원 표시
-    _circle_cell(last_row_idx, pct_col)
-    # 기준일(맨 첫 데이터 행)의 '기준 주가' 값에도 동일하게 타원 표시
+    # 기준일 행과 마지막(최신) 행 둘 다 '기준 주가' 값에 타원 표시 (상승률에는 표시 안 함)
     baseline_col = HEADERS.index("기준 주가")
     _circle_cell(1, baseline_col)
+    _circle_cell(last_row_idx, baseline_col)
 
     return tbl
     
