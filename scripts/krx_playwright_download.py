@@ -578,20 +578,14 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     page.wait_for_timeout(800)
 
-    # ========== 조회 버튼 클릭 (응답을 직접 가로채서 실제로 몇 건 왔는지 확인) ==========
-    response_holder = {}
+    # ========== 조회 버튼 클릭 (응답 도착까지만 대기 - 더 이상 표를 안 읽으므로 카운트는 불필요) ==========
+    response_arrived = {"done": False}
 
-    def _capture_response(response):
+    def _mark_response(response):
         if "getJsonData.cmd" in response.url and response.request.method == "POST":
-            try:
-                data = response.json()
-                counts = {k: len(v) for k, v in data.items() if isinstance(v, list)}
-                response_holder["counts"] = counts
-                print(f"[{company}] 🌐 서버 응답 도착 - 리스트 필드별 건수: {counts}")
-            except Exception as e:
-                print(f"[{company}] 응답 파싱 실패: {e}")
+            response_arrived["done"] = True
 
-    page.on("response", _capture_response)
+    page.on("response", _mark_response)
 
     clicked_search_btn = False
     for frame in page.frames:
@@ -617,52 +611,100 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
                 continue
 
     if not clicked_search_btn:
-        page.remove_listener("response", _capture_response)
+        page.remove_listener("response", _mark_response)
         print(f"[{company}] ✗ 조회 버튼을 찾지 못했습니다.")
         return False
 
     print(f"[{company}] 데이터 조회 진행 중 (서버 응답 대기)...")
-
-    # 서버 응답(JSON)이 도착할 때까지 대기 -> 그 응답의 실제 건수만큼 표(DOM)에
-    # 반영될 때까지 대기. 응답 건수를 확인 못하면 예전처럼 고정 시간만 대기(안전망).
-    expected_count = None
     for _ in range(40):
         page.wait_for_timeout(500)
-        if response_holder.get("counts"):
-            expected_count = max(response_holder["counts"].values())
+        if response_arrived["done"]:
             break
+    page.remove_listener("response", _mark_response)
+    page.wait_for_timeout(1000)  # 응답 도착 후 화면 반영 약간의 여유
 
-    if expected_count:
-        print(f"[{company}] 서버 응답 건수: {expected_count}건 - 화면(표) 반영 대기 중...")
-        for _ in range(30):
-            _, current_count = find_data_table(page)
-            if current_count >= expected_count:
-                print(f"[{company}] ✓ 화면 반영 완료 (렌더링된 행 수: {current_count})")
+    # ========== [임시] 다운로드 버튼 -> CSV 클릭 -> 실제 다운로드 파일 저장 ==========
+    # 표를 직접 읽는 방식 대신, KRX가 제공하는 CSV 다운로드 기능을 그대로 사용한다.
+    # 다운로드된 파일의 실제 컬럼 구조를 아직 모르므로, 이번 단계는 "원본 그대로 저장"까지만
+    # 하고 최종 형식(날짜,종가,거래량)으로 변환하는 건 다음 단계에서 완성한다.
+    download_btn = None
+    for frame in page.frames:
+        try:
+            candidate = frame.locator("button.CI-MDI-UNIT-DOWNLOAD")
+            if candidate.count() > 0:
+                download_btn = candidate.first
                 break
-            page.wait_for_timeout(500)
-        else:
-            print(f"[{company}] ⚠ {expected_count}건 중 일부만 화면에 반영된 채로 진행")
-    else:
-        print(f"[{company}] ⚠ 응답 건수를 확인하지 못했습니다 - 기본 대기로 진행")
-        page.wait_for_timeout(3000)
+        except Exception:
+            continue
 
-    page.remove_listener("response", _capture_response)
-
-    # ========== 데이터 추출 ==========
-    print(f"[{company}] 표 전체 렌더링 확인을 위해 한 번 더 스크롤 중 (안전망)...")
-    scroll_to_load_all_rows(page, company, expected_count)
-
-    print(f"[{company}] 데이터 추출 중...")
-
-    from_dt = datetime.strptime(from_date, "%Y%m%d")
-    to_dt = datetime.strptime(to_date, "%Y%m%d")
-    rows = extract_regular_volume_rows(page, from_dt, to_dt)
-
-    if not rows:
-        print(f"[{company}] ✗ 추출된 데이터가 없습니다 (기간: {from_date}~{to_date})")
+    if download_btn is None:
+        print(f"[{company}] ✗ 다운로드 버튼(.CI-MDI-UNIT-DOWNLOAD)을 찾지 못했습니다.")
         return False
 
-    # ========== CSV 저장 ==========
+    download_btn.click()
+    page.wait_for_timeout(500)
+
+    csv_link = None
+    for frame in page.frames:
+        try:
+            candidate = frame.locator("div[data-type='csv'] a")
+            if candidate.count() > 0:
+                csv_link = candidate.first
+                break
+        except Exception:
+            continue
+
+    if csv_link is None:
+        print(f"[{company}] ✗ 다운로드 팝업의 CSV 링크를 찾지 못했습니다.")
+        if debug:
+            save_debug_snapshot(page, company, "03_다운로드팝업")
+        return False
+
+    raw_path = output_path.parent / f"{company}_KRX원본다운로드.csv"
+    try:
+        with page.expect_download(timeout=15000) as download_info:
+            csv_link.click()
+        download = download_info.value
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        download.save_as(str(raw_path))
+    except Exception as e:
+        print(f"[{company}] ✗ CSV 다운로드 실패: {e}")
+        return False
+
+    # ========== 다운로드된 CSV에서 날짜/종가/정규시장 거래량만 추출해 저장 ==========
+    # KRX 다운로드 CSV 컬럼: 일자,종가,대비,등락률,시가,고가,저가,거래량,
+    #                        거래량_정규시장,거래량_애프터마켓,거래대금,... (확인 완료)
+    try:
+        raw_bytes = raw_path.read_bytes()
+        text = None
+        for enc in ("utf-8-sig", "cp949", "euc-kr"):
+            try:
+                text = raw_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValueError("알 수 없는 인코딩")
+
+        import csv as csv_module
+        import io
+        reader = csv_module.DictReader(io.StringIO(text))
+        rows = {}
+        for row in reader:
+            date_str = (row.get("일자") or "").strip()
+            close = (row.get("종가") or "").replace(",", "").strip()
+            vol_regular = (row.get("거래량_정규시장") or "").replace(",", "").strip()
+            if not date_str or not close or not vol_regular:
+                continue
+            rows[date_str] = (close, vol_regular)
+    except Exception as e:
+        print(f"[{company}] ✗ CSV 파싱 실패: {e}")
+        return False
+
+    if not rows:
+        print(f"[{company}] ✗ 다운로드된 CSV에서 유효한 행을 찾지 못했습니다.")
+        return False
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8-sig") as f:
         f.write("날짜,종가,거래량\n")
@@ -672,8 +714,7 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
 
     print(f"[{company}] ✓ 저장 완료: {len(rows)}일치 → {output_path}")
     return True
-
-
+                           
 def main():
     import argparse
 
