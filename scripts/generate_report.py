@@ -106,34 +106,61 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
         ]
         for _, row in table_df.iterrows()
     ]
+    n_rows = len(table_df)
+    n_cols = len(HEADERS)
+
     tbl = ax.table(cellText=cell_text, colLabels=HEADERS, loc="upper center", cellLoc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(8.5)
     tbl.scale(1.02, 1.0)  # y는 1.0 유지 - 행이 많아도 표 영역(axes) 밖으로 넘치지 않게 함
 
-    n_cols = len(HEADERS)
+    # 기본은 전부 얇은 한 줄 테두리 (헤더 포함, 특별 취급 없음)
     for (r, _c), cell in tbl.get_celld().items():
         cell.set_edgecolor("#999999")
         cell.set_linewidth(0.6)
         if r == 0:
             cell.set_text_props(fontweight="bold")
             cell.set_facecolor("#E9EEF5")
-            cell.set_linewidth(1.4)
 
-    # 헤더 위 + 표 맨 아래 + 지정된 구간 사이에 굵은 선
-    bold_rows = {0}  # 헤더 아래
-    bold_rows |= {i + 1 for i in bold_after}  # 데이터 행은 헤더가 0행이므로 +1
-    bold_rows.add(len(table_df))  # 표 맨 아래
-    for r in bold_rows:
-        for c in range(n_cols):
-            try:
-                cell = tbl[(r, c)]
-            except KeyError:
-                continue
-            cell.set_linewidth(1.4)
+    # 마지막(최신) 행은 굵게 표시
+    last_row_idx = n_rows  # 헤더가 0행이므로 데이터 마지막 행은 n_rows
+    for c in range(n_cols):
+        try:
+            tbl[(last_row_idx, c)].set_text_props(fontweight="bold")
+        except KeyError:
+            pass
+
+    # 셀의 실제 x/y/width/height는 그림이 한 번 렌더링되기 전까지 계산되지 않으므로
+    # (기본값 0), 강제로 한 번 그려서 레이아웃을 확정한 뒤 좌표를 읽는다.
+    ax.figure.canvas.draw()
+
+    # 지정된 두 경계 위치에 이중선을 실제 셀 좌표 기준으로 그린다
+    for data_idx in bold_after:  # 이 데이터 행(0-base) '아래'에 이중선
+        table_row = data_idx + 1  # 헤더가 0행이므로 데이터 행은 +1
+        try:
+            cell = tbl[(table_row, 0)]
+        except KeyError:
+            continue
+        y = cell.get_y()  # 이 행의 아래쪽 경계 = 다음 행과의 경계선
+        row_h = cell.get_height()
+        gap = row_h * 0.12
+        for offset in (gap, -gap):
+            ax.plot([0, 1], [y + offset, y + offset], transform=ax.transAxes,
+                    color="#666666", linewidth=0.7, solid_capstyle="butt", clip_on=False)
+
+    # 마지막 행 '상승률' 값 위에 파란 동그라미 표시
+    try:
+        last_pct_cell = tbl[(last_row_idx, n_cols - 1)]
+        cx = last_pct_cell.get_x() + last_pct_cell.get_width() / 2
+        cy = last_pct_cell.get_y() + last_pct_cell.get_height()  # 셀 상단
+        ax.scatter([cx], [cy], transform=ax.transAxes, s=40, marker="o",
+                   facecolor="none", edgecolor="#1F5FBF", linewidth=1.6,
+                   zorder=6, clip_on=False)
+    except KeyError:
+        pass
+
     return tbl
-
-
+    
 def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE) -> bool:
     """전달받은 Axes 위에 종가 추이 그래프를 그린다 (기준일부터, 최고/최저/마지막 강조)."""
     plot_df = df[df["날짜"] >= baseline_date].dropna(subset=["종가"]).reset_index(drop=True)
@@ -189,7 +216,11 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
                         bold_after: set, full_df: pd.DataFrame, baseline_date: pd.Timestamp = DEFAULT_BASELINE_DATE):
     """A4 한 페이지(제목 + 표 + 그래프)를 주어진 figure 위에 그린다.
     개별 보고서(페이지 1장짜리 fig)와 통합 보고서(회사별로 반복 호출)에서 공용으로 쓴다."""
-    gs = fig.add_gridspec(nrows=3, ncols=1, height_ratios=[0.07, 0.42, 0.48],
+    n_rows = len(table_df)
+    table_units = n_rows + 1  # +헤더
+    title_units = 3
+    chart_units = max(16, 34 - table_units)  # 표가 커져도 그래프 영역이 너무 작아지지 않게 최소값 보장
+    gs = fig.add_gridspec(nrows=3, ncols=1, height_ratios=[title_units, table_units, chart_units],
                            top=0.96, bottom=0.05, left=0.08, right=0.94, hspace=0.12)
 
     ax_title = fig.add_subplot(gs[0])
