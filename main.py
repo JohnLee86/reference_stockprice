@@ -47,7 +47,14 @@ def build_manifest(companies: list[dict], today: str) -> list[dict]:
         if existing_xlsx.exists():
             prev = pd.read_excel(existing_xlsx, sheet_name="계산용데이터")
             last_date = pd.to_datetime(prev["날짜"]).max()
-            from_date = (last_date + timedelta(days=1)).strftime("%Y%m%d")
+            # 같은 날 오전/오후에 두 번 실행하는 경우에도 당일·전일 거래량(장중 vs 장마감)이
+            # 갱신될 수 있으므로, 이미 보유한 최신 날짜라도 최근 며칠은 매번 다시 받아
+            # 최신 값으로 덮어쓴다 (merge_data가 같은 날짜는 신규 값으로 정정함).
+            from_date_dt = last_date - timedelta(days=1)
+            lookback_floor = pd.Timestamp(today) - timedelta(days=2)
+            if from_date_dt > lookback_floor:
+                from_date_dt = lookback_floor
+            from_date = from_date_dt.strftime("%Y%m%d")
 
         today_compact = today.replace("-", "")
         if from_date > today_compact:
