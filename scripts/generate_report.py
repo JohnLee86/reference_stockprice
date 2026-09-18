@@ -142,8 +142,8 @@ def draw_table(ax, table_df: pd.DataFrame, bold_after: set):
         except KeyError:
             continue
         y = cell.get_y()  # 이 행의 아래쪽 경계 = 다음 행과의 경계선
-        ax.plot([0, 1], [y, y], transform=ax.transAxes,
-                color="#222222", linewidth=1.8, solid_capstyle="butt", clip_on=False)
+        ax.plot([-0.002, 1.002], [y, y], transform=ax.transAxes,
+                color="#222222", linewidth=1.8, solid_capstyle="butt", clip_on=False, zorder=10)
 
     # 마지막 행 '상승률' 값 위에 파란 동그라미 표시
     try:
@@ -172,6 +172,12 @@ def build_chart(df: pd.DataFrame, ax, baseline_date: pd.Timestamp = DEFAULT_BASE
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, color="#cccccc")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+
+    # 최고점이 축 맨 꼭대기에 붙어있으면 그 위의 라벨이 축 밖(제목 영역)까지
+    # 튀어나가버리므로, 위쪽에 미리 여유 공간을 확보해둔다.
+    y_min, y_max = plot_df["종가"].min(), plot_df["종가"].max()
+    y_range = y_max - y_min or y_max * 0.1
+    ax.set_ylim(y_min - y_range * 0.08, y_max + y_range * 0.15)
 
     # x축: 월 단위 눈금, 45도 회전
     plot_df["ym"] = plot_df["날짜"].dt.to_period("M")
@@ -246,10 +252,24 @@ def render_report_page(fig, company: str, calc_date: pd.Timestamp, table_df: pd.
     if not chart_ok:
         ax_chart.axis("off")
 
-    # 그래프의 좌우 폭을 표와 정확히 동일하게 맞춘다 (안전장치)
-    table_pos = ax_table.get_position()
-    chart_pos = ax_chart.get_position()
-    ax_chart.set_position([table_pos.x0, chart_pos.y0, table_pos.width, chart_pos.height])
+    # 그래프의 '전체' 폭(y축 라벨 "종가(원)" + 눈금 숫자까지 포함)이 표의 전체 폭과
+    # 정확히 같아지도록 맞춘다. y축 라벨/눈금은 축 상자(spine)보다 왼쪽으로 삐져나오므로,
+    # 그 삐져나온 만큼 축 상자 자체를 오른쪽으로 밀어 넣어야 전체 폭이 표와 일치한다.
+    if chart_ok:
+        fig.canvas.draw()
+        table_pos = ax_table.get_position()
+        chart_pos = ax_chart.get_position()
+        renderer = fig.canvas.get_renderer()
+        yaxis_bbox = ax_chart.yaxis.get_tightbbox(renderer)
+        yaxis_bbox_fig = yaxis_bbox.transformed(fig.transFigure.inverted())
+        left_overhang = chart_pos.x0 - yaxis_bbox_fig.x0  # 라벨이 축 상자보다 왼쪽으로 튀어나온 양
+        new_x0 = table_pos.x0 + max(left_overhang, 0)
+        new_right = table_pos.x0 + table_pos.width  # 오른쪽 끝은 표와 동일하게 유지
+        ax_chart.set_position([new_x0, chart_pos.y0, new_right - new_x0, chart_pos.height])
+    else:
+        table_pos = ax_table.get_position()
+        chart_pos = ax_chart.get_position()
+        ax_chart.set_position([table_pos.x0, chart_pos.y0, table_pos.width, chart_pos.height])
 
 
 def build_pdf(company: str, calc_date: pd.Timestamp, table_df: pd.DataFrame,
