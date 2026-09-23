@@ -2,8 +2,8 @@ name: 일별 기준주가 보고서 자동 발송
 
 on:
   schedule:
-    # 08:30 UTC = 17:30 KST, 월~금
-    - cron: "30 8 * * 1-5"
+    # 08:37 UTC = 17:37 KST, 월~금 (정각/30분처럼 몰리는 시각을 피해 지연 가능성을 줄임)
+    - cron: "37 8 * * 1-5"
   workflow_dispatch: {}  # Actions 탭에서 수동 실행 버튼으로도 테스트 가능
 
 permissions:
