@@ -60,7 +60,13 @@ def check_success(page) -> bool:
 def login(page, krx_id, krx_pw) -> bool:
     """KRX 로그인"""
     print("[로그인] 로그인 페이지 이동 중...")
-    page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
+    try:
+        page.goto(LOGIN_URL, wait_until="networkidle", timeout=20000)
+    except Exception:
+        # 사이트가 평소보다 무거워 네트워크가 끝까지 잠잠해지지 않는 경우를 대비한 완화된 재시도:
+        # DOM까지만 로드되면 충분하므로 networkidle 대신 domcontentloaded로 한 번 더 시도한다.
+        print("[로그인] ⚠ networkidle 대기 실패 - domcontentloaded 기준으로 재시도")
+        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
     page.wait_for_timeout(1500)
 
     for attempt in range(5):
