@@ -393,8 +393,14 @@ def process_company(page, company: str, ticker: str, from_date: str, to_date: st
           
     try:
         print(f"[{company}] 1단계: 종목 선택 페이지로 이동...")
-        page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=30000)
-        page.wait_for_timeout(2000)
+        try:
+            page.goto(STOCK_PAGE_URL, wait_until="networkidle", timeout=15000)
+        except Exception:
+            # 이 페이지가 뭔가를 계속 폴링하는 것으로 보여 networkidle이 거의 오지 않는다.
+            # DOM 로드만 확인하고, 실제 내용이 그려질 시간을 별도로 기다린다.
+            print(f"[{company}] ⚠ networkidle 대기 실패 - domcontentloaded 기준으로 재시도")
+            page.goto(STOCK_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
     except Exception as e:
         print(f"[{company}] ✗ 페이지 이동 실패: {e}")
         return False
